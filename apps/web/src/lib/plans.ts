@@ -164,3 +164,22 @@ export function billingConfigured(): boolean {
 export function paddleEnvironment(): "sandbox" | "production" {
   return process.env.PADDLE_ENV === "production" ? "production" : "sandbox";
 }
+
+/**
+ * Resolve a provider price id to a plan.
+ *
+ * Configuration is the only mapping. A price id that matches nothing configured
+ * is not guessed at — the webhook records the event and refuses to apply it,
+ * so a mis-keyed environment variable produces an unapplied event rather than a
+ * silently wrong entitlement.
+ */
+export function planForPriceId(priceId: string): PlanId | null {
+  const needle = priceId.trim();
+  if (needle.length === 0) return null;
+  for (const plan of plans()) {
+    if (plan.priceIds.monthly === needle || plan.priceIds.yearly === needle) {
+      return plan.id;
+    }
+  }
+  return null;
+}

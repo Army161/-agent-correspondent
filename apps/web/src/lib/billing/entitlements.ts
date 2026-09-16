@@ -15,15 +15,11 @@ import "server-only";
 
 import { eq, getDb, subscriptions } from "@acor/db";
 
-import { DEFAULT_PLAN_ID, planById, type Plan, type PlanId, plans } from "../plans";
+import { DEFAULT_PLAN_ID, planById, type Plan } from "../plans";
 
-export type SubscriptionStatus =
-  | "NONE"
-  | "TRIALING"
-  | "ACTIVE"
-  | "PAST_DUE"
-  | "PAUSED"
-  | "CANCELED";
+import type { SubscriptionStatus } from "./subscription-status";
+
+export type { SubscriptionStatus };
 
 /** The statuses that actually confer the paid plan's limits. */
 const ENTITLING: ReadonlySet<SubscriptionStatus> = new Set<SubscriptionStatus>([
@@ -99,23 +95,4 @@ export async function entitlementsFor(organizationId: string): Promise<Entitleme
   } catch {
     return fallback("unavailable");
   }
-}
-
-/**
- * Resolve a provider price id to a plan.
- *
- * Configuration is the only mapping. A price id that matches nothing configured
- * is not guessed at — the webhook records the event and refuses to apply it,
- * so a mis-keyed environment variable produces an unapplied event rather than a
- * silently wrong entitlement.
- */
-export function planForPriceId(priceId: string): PlanId | null {
-  const needle = priceId.trim();
-  if (needle.length === 0) return null;
-  for (const plan of plans()) {
-    if (plan.priceIds.monthly === needle || plan.priceIds.yearly === needle) {
-      return plan.id;
-    }
-  }
-  return null;
 }

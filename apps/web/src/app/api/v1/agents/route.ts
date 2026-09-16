@@ -25,6 +25,7 @@ import {
 } from "@acor/core";
 
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized, violations } from "@/lib/api";
+import { canCreateAgent } from "@/lib/billing/limits";
 import { listAgents, recordAudit } from "@/lib/platform";
 
 export const runtime = "nodejs";
@@ -78,6 +79,23 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!parsed.success) {
     return badRequest(
       `${parsed.error.issues[0]?.path.join(".") ?? "body"}: ${parsed.error.issues[0]?.message ?? "invalid"}`,
+    );
+  }
+
+  // The plan limit is checked here, against a server-side read of the
+  // subscription, rather than in the UI. A limit the browser enforces is a
+  // suggestion.
+  const limit = await canCreateAgent(principal.organizationId);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      {
+        error: "PLAN_LIMIT",
+        message: limit.reason,
+        plan: limit.planId,
+        limit: limit.limit,
+        current: limit.current,
+      },
+      { status: 402 },
     );
   }
 

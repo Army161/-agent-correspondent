@@ -9,6 +9,7 @@ import {
   Briefcase,
   Code2,
   Coins,
+  CreditCard,
   LayoutGrid,
   MessageSquare,
   Scale,
@@ -33,6 +34,7 @@ const PRIMARY = [
 ] as const;
 
 const SECONDARY = [
+  { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/security", label: "Security", icon: Shield },
 ] as const;
