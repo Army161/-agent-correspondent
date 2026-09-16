@@ -17,6 +17,7 @@ import {
   Wallet,
 } from "lucide-react";
 
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { LogoMark } from "@/components/brand/logo";
 import { cn } from "@/lib/cn";
 
@@ -98,6 +99,12 @@ export function AppNav({ userEmail }: { userEmail?: string | null }): React.JSX.
             />
           ))}
         </nav>
+        <div className="px-3 pt-4">
+          <div className="truncate text-[11px] text-[var(--color-subtle)]">
+            {userEmail ?? "Not signed in"}
+          </div>
+          {userEmail ? <SignOutButton /> : null}
+        </div>
       </div>
     </>
   );
@@ -139,11 +146,6 @@ export function AppNav({ userEmail }: { userEmail?: string | null }): React.JSX.
           </span>
         </Link>
         {body}
-        <div className="mt-auto px-6 pt-6">
-          <div className="truncate text-[11px] text-[var(--color-subtle)]">
-            {userEmail ?? "Not signed in"}
-          </div>
-        </div>
       </aside>
     </>
   );

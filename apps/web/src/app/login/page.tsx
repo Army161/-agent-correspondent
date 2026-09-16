@@ -2,50 +2,36 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { AuthForm, type ProviderOption } from "@/components/auth/auth-form";
 import { LogoMark } from "@/components/brand/logo";
-import { Button, Input, Label, Panel } from "@/components/ui/primitives";
-import { authenticate, createSession, currentUser, registerUser } from "@/lib/auth";
-import { isDatabaseConfigured } from "@acor/db";
+import { Panel } from "@/components/ui/primitives";
+import { authUnavailableReason, currentUser, socialProviderAvailability } from "@/lib/auth";
+import { MIN_PASSWORD_LENGTH } from "@/lib/auth/policy";
+import { safeInternalPath } from "@/lib/redirects";
 
 export const metadata: Metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
-async function signIn(formData: FormData): Promise<void> {
-  "use server";
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
-  const result = await authenticate(email, password);
-  if (!result.ok || !result.userId) {
-    redirect(`/login?error=${encodeURIComponent(result.error ?? "Sign in failed.")}`);
-  }
-  await createSession(result.userId);
-  redirect("/chat");
-}
-
-async function signUp(formData: FormData): Promise<void> {
-  "use server";
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
-  const organization = String(formData.get("organization") ?? "").trim() || "My organization";
-  const result = await registerUser(email, password, organization);
-  if (!result.ok || !result.userId) {
-    redirect(`/login?error=${encodeURIComponent(result.error ?? "Registration failed.")}`);
-  }
-  await createSession(result.userId);
-  redirect("/chat");
-}
-
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; mode?: string }>;
+  searchParams: Promise<{ mode?: string; next?: string; error?: string }>;
 }): Promise<React.JSX.Element> {
-  const { error, mode } = await searchParams;
+  const { mode, next, error } = await searchParams;
   const user = await currentUser();
-  if (user) redirect("/chat");
 
-  const configured = isDatabaseConfigured();
+  // An open redirect in an auth flow hands an attacker a valid session, so the
+  // post-sign-in destination is validated as a same-origin path or dropped.
+  const redirectTo = safeInternalPath(next, "/onboarding");
+  if (user) redirect(redirectTo);
+
   const registering = mode === "register";
+  const unavailableReason = authUnavailableReason();
+  const providers: readonly ProviderOption[] = socialProviderAvailability().map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    configured: provider.configured,
+  }));
 
   return (
     <main className="flex min-h-dvh items-center justify-center px-5 py-12">
@@ -62,9 +48,9 @@ export default async function LoginPage({
             {registering ? "Create an account" : "Sign in"}
           </h1>
           <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--color-muted)]">
-            {configured
-              ? "Access the Agent Chat OS and your organization's agents."
-              : "This deployment has no database configured, so accounts cannot be created or used. Set DATABASE_URL and run the migrations in packages/db."}
+            {unavailableReason
+              ? `Accounts are unavailable on this deployment. ${unavailableReason}`
+              : "Access the Agent Chat OS and your organization's agents."}
           </p>
 
           {error ? (
@@ -73,51 +59,13 @@ export default async function LoginPage({
             </div>
           ) : null}
 
-          <form action={registering ? signUp : signIn} className="mt-5 space-y-4">
-            {registering ? (
-              <div>
-                <Label htmlFor="organization">Organization</Label>
-                <Input
-                  id="organization"
-                  name="organization"
-                  autoComplete="organization"
-                  disabled={!configured}
-                  placeholder="Acme Research"
-                />
-              </div>
-            ) : null}
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                required
-                autoComplete="email"
-                disabled={!configured}
-              />
-            </div>
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                required
-                minLength={registering ? 12 : 1}
-                autoComplete={registering ? "new-password" : "current-password"}
-                disabled={!configured}
-              />
-              {registering ? (
-                <p className="mt-1.5 text-[11px] text-[var(--color-subtle)]">
-                  At least 12 characters. Hashed with scrypt; never stored in the clear.
-                </p>
-              ) : null}
-            </div>
-            <Button type="submit" variant="primary" className="w-full" disabled={!configured}>
-              {registering ? "Create account" : "Sign in"}
-            </Button>
-          </form>
+          <AuthForm
+            mode={registering ? "register" : "sign-in"}
+            providers={providers}
+            redirectTo={redirectTo}
+            unavailableReason={unavailableReason}
+            minPasswordLength={MIN_PASSWORD_LENGTH}
+          />
 
           <p className="mt-5 text-center text-[13px] text-[var(--color-muted)]">
             {registering ? (

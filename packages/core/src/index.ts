@@ -32,3 +32,4 @@ export * from "./muledger/netting";
 export * from "./receipts/index";
 export * from "./reputation/index";
 export * from "./jobs/lifecycle";
+export * from "./onboarding/index";

@@ -7,11 +7,16 @@
  * an address, the custody model, and an opaque provider reference.
  */
 
-import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { agents, agentWallets, getDb } from "@acor/db";
+import {
+  agents,
+  agentWallets,
+  and,
+  eq,
+  getDb,
+} from "@acor/db";
 import { newId } from "@acor/core";
 
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized } from "@/lib/api";

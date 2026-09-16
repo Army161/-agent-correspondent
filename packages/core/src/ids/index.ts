@@ -17,6 +17,9 @@ export type IdPrefix =
   | "hook"
   | "org"
   | "user"
+  | "onb"
+  | "sub"
+  | "bill"
   | "mandate";
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"; // Crockford base32, no i/l/o/u

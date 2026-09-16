@@ -65,11 +65,22 @@ async function api(
 async function signUp(page: Page): Promise<string> {
   const email = `owner-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
   await page.goto("/login?mode=register");
-  await page.getByLabel("Organization").fill("Acme Research");
+  await page.getByLabel("Your name").fill("Ada Lovelace");
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Create account" }).click();
-  await page.waitForURL("**/chat");
+  // A new account lands in onboarding, not in the product.
+  await page.waitForURL("**/onboarding");
+  return email;
+}
+
+/** Sign up, name the organization, and continue into the product. */
+async function signUpAndName(page: Page, organization = "Acme Research"): Promise<string> {
+  const email = await signUp(page);
+  await page.getByLabel("Organization name").fill(organization);
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByLabel("Organization name")).toHaveValue(organization);
   return email;
 }
 
@@ -99,8 +110,10 @@ test.describe("without a database", () => {
 test.describe("with a database", () => {
   test.skip(async ({ request }) => !(await databaseConfigured(request)), "database not configured");
 
-  test("a new account can be created and lands in the Agent Chat OS", async ({ page }) => {
-    const email = await signUp(page);
+  test("a new account can be created and lands in onboarding", async ({ page }) => {
+    const email = await signUpAndName(page);
+    await expect(page.getByRole("heading", { name: "Get set up" })).toBeVisible();
+    await page.goto("/chat");
     await expect(page.getByRole("heading", { name: "Chat", exact: true })).toBeVisible();
     await page.goto("/settings");
     // Scoped to main: the desktop rail also renders the email, and it is

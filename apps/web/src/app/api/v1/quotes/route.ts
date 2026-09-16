@@ -5,10 +5,16 @@
  * can see why the winner won rather than being asked to trust a number.
  */
 
-import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
-import { agentCapabilities, agents, fromNanosColumn, getDb } from "@acor/db";
+import {
+  agentCapabilities,
+  agents,
+  and,
+  eq,
+  fromNanosColumn,
+  getDb,
+} from "@acor/db";
 import {
   explainRanking,
   formatUsd,

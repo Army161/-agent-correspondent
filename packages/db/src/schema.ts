@@ -122,8 +122,16 @@ export const users = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     email: varchar("email", { length: 320 }).notNull(),
     displayName: text("display_name"),
-    /** scrypt hash, `scrypt$N$r$p$salt$hash`. Never a plaintext or reversible value. */
-    passwordHash: text("password_hash").notNull(),
+    /**
+     * The Better Auth identity this membership belongs to.
+     *
+     * Authentication lives in `auth_users`; this table is organization
+     * membership. Nullable only so rows created before the migration remain
+     * readable.
+     */
+    authUserId: text("auth_user_id").references(() => authUsers.id, { onDelete: "cascade" }),
+    /** @deprecated Superseded by Better Auth credential accounts. */
+    passwordHash: text("password_hash"),
     role: varchar("role", { length: 32 }).notNull().default("owner"),
     createdAt: createdAt(),
     lastLoginAt: timestamp("last_login_at", { withTimezone: true, mode: "date" }),
@@ -146,6 +154,284 @@ export const sessions = pgTable(
   (table) => [
     uniqueIndex("sessions_token_hash_unique").on(table.tokenHash),
     index("sessions_user_idx").on(table.userId),
+  ],
+);
+
+
+// ---------------------------------------------------------------------------
+// Authentication (Better Auth)
+// ---------------------------------------------------------------------------
+//
+// These tables are owned by Better Auth. They are declared here rather than
+// generated into a separate file so that one migration history covers the whole
+// database — an auth schema that drifts from the application schema is a class
+// of outage nobody needs.
+//
+// The application's own `users` table remains for organization membership and
+// is keyed to `auth_users.id`.
+
+export const authUsers = pgTable(
+  "auth_users",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    image: text("image"),
+    /** Set by the twoFactor plugin once a second factor is enrolled. */
+    twoFactorEnabled: boolean("two_factor_enabled").default(false),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("auth_users_email_unique").on(table.email)],
+);
+
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    /** Opaque bearer token. Treated as a secret; never logged. */
+    token: text("token").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    /** Set by the twoFactor plugin while a second factor is outstanding. */
+    impersonatedBy: text("impersonated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("auth_sessions_token_unique").on(table.token),
+    index("auth_sessions_user_idx").on(table.userId),
+  ],
+);
+
+export const authAccounts = pgTable(
+  "auth_accounts",
+  {
+    id: text("id").primaryKey(),
+    /** The provider's own identifier for this identity. */
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    scope: text("scope"),
+    /** Password hash for the credential provider. Never a reversible value. */
+    password: text("password"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("auth_accounts_provider_unique").on(table.providerId, table.accountId),
+    index("auth_accounts_user_idx").on(table.userId),
+  ],
+);
+
+export const authVerifications = pgTable(
+  "auth_verifications",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [index("auth_verifications_identifier_idx").on(table.identifier)],
+);
+
+export const authTwoFactors = pgTable(
+  "auth_two_factors",
+  {
+    id: text("id").primaryKey(),
+    /** TOTP secret. Encrypted at rest by Better Auth using AUTH_SECRET. */
+    secret: text("secret").notNull(),
+    /** Recovery codes, hashed. Shown once at generation and never again. */
+    backupCodes: text("backup_codes").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    /** False until the first correct code proves the secret was actually enrolled. */
+    verified: boolean("verified").default(true),
+    /**
+     * Consecutive wrong codes. A six-digit code has a million values and a
+     * thirty-second window; without a counter, that is brute-forceable.
+     */
+    failedVerificationCount: integer("failed_verification_count").default(0),
+    /** Set when the counter trips. Verification is refused until it passes. */
+    lockedUntil: timestamp("locked_until", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [index("auth_two_factors_user_idx").on(table.userId)],
+);
+
+/**
+ * Rate-limit counters.
+ *
+ * In the database rather than in process memory on purpose: a memory counter is
+ * per-instance, so behind more than one server it limits nothing — an attacker
+ * simply spreads the attempts. This table is shared state, which is what a
+ * limit needs to be.
+ */
+export const authRateLimits = pgTable("auth_rate_limits", {
+  id: text("id").primaryKey(),
+  /** The limiter's own key: a path and an IP, never a user identifier. */
+  key: text("key").notNull().unique(),
+  count: integer("count").notNull().default(0),
+  /** Epoch milliseconds of the most recent request in the window. */
+  lastRequest: numeric("last_request", { precision: 20, scale: 0 }).notNull(),
+});
+
+export const authPasskeys = pgTable(
+  "auth_passkeys",
+  {
+    id: text("id").primaryKey(),
+    name: text("name"),
+    /** COSE public key. Public by construction; no secret is stored. */
+    publicKey: text("public_key").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    credentialID: text("credential_i_d").notNull(),
+    counter: integer("counter").notNull().default(0),
+    deviceType: text("device_type"),
+    backedUp: boolean("backed_up"),
+    transports: text("transports"),
+    aaguid: text("aaguid"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow(),
+  },
+  (table) => [index("auth_passkeys_user_idx").on(table.userId)],
+);
+
+// ---------------------------------------------------------------------------
+// Onboarding
+// ---------------------------------------------------------------------------
+
+/**
+ * Recorded onboarding answers.
+ *
+ * Deliberately small: it holds only what cannot be observed elsewhere. Whether
+ * an agent exists is answered by the `agents` table, whether the address is
+ * confirmed by `auth_users`, and whether the organization is named by
+ * `organizations`. Duplicating those here would create a second, staler truth.
+ */
+export const onboardingProgress = pgTable(
+  "onboarding_progress",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** One sentence on what they are building. Free text, never parsed for authorization. */
+    purpose: text("purpose"),
+    purposeRecordedAt: timestamp("purpose_recorded_at", { withTimezone: true, mode: "date" }),
+    /** The plan the owner explicitly chose, including the free tier. */
+    selectedPlanId: varchar("selected_plan_id", { length: 32 }),
+    planSelectedAt: timestamp("plan_selected_at", { withTimezone: true, mode: "date" }),
+    /** Set when the owner dismisses the checklist without finishing it. */
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("onboarding_progress_org_unique").on(table.organizationId)],
+);
+
+// ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "NONE",
+  "TRIALING",
+  "ACTIVE",
+  "PAST_DUE",
+  "PAUSED",
+  "CANCELED",
+]);
+
+/**
+ * The billing state of one organization.
+ *
+ * Written only by the verified webhook handler and by a server-side
+ * reconciliation read against the provider's API. Never written from a checkout
+ * success callback: the browser reaching a success page proves the browser
+ * reached a success page, and nothing about whether money moved.
+ */
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** `paddle`. Named so a second provider does not require a migration. */
+    provider: varchar("provider", { length: 32 }).notNull(),
+    providerCustomerId: varchar("provider_customer_id", { length: 128 }),
+    providerSubscriptionId: varchar("provider_subscription_id", { length: 128 }),
+    /** The provider price id this subscription is on, as configured. */
+    providerPriceId: varchar("provider_price_id", { length: 128 }),
+    /** Resolved from the price id through configuration, never from the browser. */
+    planId: varchar("plan_id", { length: 32 }).notNull(),
+    status: subscriptionStatusEnum("status").notNull().default("NONE"),
+    /** The provider's own status string, kept verbatim for support and audit. */
+    providerStatus: varchar("provider_status", { length: 64 }),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true, mode: "date" }),
+    cancelAt: timestamp("cancel_at", { withTimezone: true, mode: "date" }),
+    /** The provider event that last advanced this row, for idempotency and audit. */
+    lastEventId: varchar("last_event_id", { length: 128 }),
+    lastEventAt: timestamp("last_event_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("subscriptions_org_unique").on(table.organizationId),
+    index("subscriptions_provider_sub_idx").on(table.providerSubscriptionId),
+  ],
+);
+
+/**
+ * Every billing webhook that passed signature verification.
+ *
+ * Append-only and unique on the provider's event id: a replayed delivery is
+ * recognised and ignored rather than applied twice. An unverified delivery
+ * never reaches this table.
+ */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: id().primaryKey(),
+    provider: varchar("provider", { length: 32 }).notNull(),
+    providerEventId: varchar("provider_event_id", { length: 128 }).notNull(),
+    eventType: varchar("event_type", { length: 128 }).notNull(),
+    organizationId: id("organization_id").references(() => organizations.id, {
+      onDelete: "set null",
+    }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }),
+    payload: jsonb("payload").notNull(),
+    /** Null while the event is recorded but not yet applied. */
+    appliedAt: timestamp("applied_at", { withTimezone: true, mode: "date" }),
+    /** Why the event was not applied, when it was not. */
+    rejectedReason: text("rejected_reason"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("billing_events_provider_event_unique").on(table.provider, table.providerEventId),
+    index("billing_events_org_idx").on(table.organizationId),
   ],
 );
 
