@@ -11,15 +11,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { keccak256 } from "@acor/adapters";
-import { getDb, economicIntents } from "@acor/db";
 import {
-  assetDefinition,
   buildIntentTypedData,
   compileIntent,
   describeIntent,
   hashIntent,
-  intentAssetId,
   intentHash,
+  intentToWire,
 } from "@acor/core";
 
 import {
@@ -29,10 +27,56 @@ import {
   unauthorized,
   violations,
 } from "@/lib/api";
+import { createRelay } from "@/lib/relay";
 import { recordAudit } from "@/lib/platform";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** List intents, newest first. Expiry is evaluated live, not read from a row. */
+export async function GET(request: Request): Promise<NextResponse> {
+  const principal = await authenticateRequest(request);
+  if (!principal) return unauthorized();
+
+  const relay = createRelay({ organizationId: principal.organizationId });
+  if (!relay) {
+    return NextResponse.json(
+      {
+        error: "NOT_CONNECTED",
+        message:
+          "No database is configured for this deployment, so no intents are stored. Set DATABASE_URL and run the migrations in packages/db.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const url = new URL(request.url);
+  const status = url.searchParams.get("status");
+  const buyerAgentId = url.searchParams.get("buyerAgentId");
+  const providerAgentId = url.searchParams.get("providerAgentId");
+
+  const stored = await relay.list({
+    ...(status ? { status: status.toUpperCase() as "OPEN" } : {}),
+    ...(buyerAgentId ? { buyerAgentId } : {}),
+    ...(providerAgentId ? { providerAgentId } : {}),
+  });
+
+  return NextResponse.json({
+    intents: stored.map((entry) => ({
+      intentId: entry.intent.intentId,
+      hash: entry.hash,
+      status: entry.status,
+      signer: entry.signer,
+      service: entry.intent.service,
+      buyerAgentId: entry.intent.buyerAgentId,
+      providerAgentId: entry.intent.providerAgentId,
+      settlementAsset: entry.intent.settlementAsset,
+      network: entry.intent.network,
+      expiresAt: new Date(entry.intent.expiresAt * 1000).toISOString(),
+      receivedAt: entry.receivedAt.toISOString(),
+    })),
+  });
+}
 
 const schema = z.object({
   buyerAgentId: z.string().min(1),
@@ -120,49 +164,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   const digest = hashIntent(intent, keccak256);
   if (!digest.ok) return violations(digest.violations);
 
-  // Persist the compiled intent so the relay can recognise it later. Storage is
-  // optional: compiling works without a database, it just is not remembered.
-  const db = getDb();
-  if (db) {
-    try {
-      await db.insert(economicIntents).values({
-        id: intent.intentId,
-        organizationId: principal.organizationId,
-        buyerAgentId: intent.buyerAgentId,
-        providerAgentId: intent.providerAgentId,
-        service: intent.service,
-        serviceHash: intent.serviceHash,
-        // The legacy USD columns are retained for rows written before the
-        // asset-native migration. They are no longer the source of truth and
-        // are written as zero rather than as a dollar figure this intent does
-        // not have: an XRP intent has no dollar amount until it is valued.
-        maxSpendNanos: "0",
-        minReceiveNanos: "0",
-        maxNetworkFeeNanos: "0",
-        maxSpendAtomic: intent.maxSpend.toString(10),
-        minReceiveAtomic: intent.minReceive.toString(10),
-        maxNetworkFeeAtomic: intent.maxNetworkFee.toString(10),
-        settlementAssetId: intentAssetId(intent),
-        settlementAssetDecimals: assetDefinition(intentAssetId(intent))?.decimals ?? null,
-        settlementAsset: intent.settlementAsset,
-        allowedRails: [...intent.allowedRails],
-        maxFxSlippageBps: intent.maxFxSlippageBps,
-        evaluator: intent.evaluator,
-        network: intent.network,
-        destination: intent.destination,
-        chainId: intent.chainId,
-        verifyingContract: intent.verifyingContract,
-        nonce: intent.nonce,
-        deadline: new Date(intent.deadline * 1000),
-        expiresAt: new Date(intent.expiresAt * 1000),
-        intentHash: intentHash(intent),
-        status: "OPEN",
-      });
-    } catch {
-      // A duplicate id means the same intent was compiled twice, which is
-      // idempotent by construction — the id is derived from the content.
-    }
-  }
+  // Compiling deliberately stores nothing.
+  //
+  // An intent nobody has signed is not an authorization, and writing one into
+  // the relay's store as OPEN made the relay's idempotency check short-circuit
+  // every later submission to "already accepted" — before the signature,
+  // ownership, nonce and mandate checks ran. The intent id is derived from the
+  // content, so the document can be recompiled or simply signed and submitted.
 
   await recordAudit({
     organizationId: principal.organizationId,
@@ -177,6 +185,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     intentId: intent.intentId,
     intentHash: intentHash(intent),
     digest: digest.value,
+    // The canonical document to sign and hand back to /intents/submit.
+    intent: intentToWire(intent),
     display: describeIntent(intent),
     typedData: {
       domain: typedData.value.domain,
@@ -192,6 +202,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       ),
     },
     status: "AWAITING_SIGNATURE",
-    persisted: db !== null,
+    persisted: false,
   });
 }

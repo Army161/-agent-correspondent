@@ -48,12 +48,47 @@ export interface IntentStore {
   prune(before: Date): Promise<number>;
 }
 
-/** Verifies that `signature` over the intent's EIP-712 digest recovers `signer`. */
+/**
+ * Verifies that `signature` over the intent's EIP-712 digest recovers `signer`.
+ * Implementations come from `intent/signature.ts`; the indirection exists so the
+ * kernel does not take a hard EVM dependency at this layer.
+ */
 export type SignatureVerifier = (
   intent: EconomicIntent,
   signature: string,
   signer: string,
 ) => Promise<boolean>;
+
+/**
+ * Whether `signer` is authorized to commit `buyerAgentId`'s money.
+ *
+ * A valid signature proves only that *someone* signed. It does not prove they
+ * are allowed to spend this agent's balance — without this check, anyone with a
+ * wallet could author a valid authorization naming someone else's agent as the
+ * buyer, and every downstream check would pass.
+ */
+export type SignerAuthorization = (
+  buyerAgentId: string,
+  signer: string,
+) => Promise<boolean>;
+
+/** An economic decision worth keeping, including the refusals. */
+export interface RelayAuditEvent {
+  readonly action:
+    | "intent.submitted"
+    | "intent.accepted"
+    | "intent.rejected"
+    | "intent.consumed"
+    | "intent.cancelled"
+    | "intent.pruned";
+  readonly intentId: string;
+  readonly signer: string | null;
+  readonly outcome: "ALLOW" | "DENY";
+  readonly detail: Readonly<Record<string, string>>;
+  readonly at: Date;
+}
+
+export type AuditSink = (event: RelayAuditEvent) => Promise<void>;
 
 export interface ProviderState {
   readonly agentId: string;
@@ -63,7 +98,15 @@ export interface ProviderState {
   readonly verified: boolean;
 }
 
-export type ProviderLookup = (agentId: string) => Promise<ProviderState | null>;
+/**
+ * Resolve the provider's state *for this intent's network*.
+ *
+ * A provider's payout destination is network-specific: an Arc address on Arc, an
+ * XRPL account on XRPL, and the agent id itself on the μLedger, where nothing
+ * moves on a chain. Comparing a signed destination against the wrong network's
+ * address would reject every legitimate authorization on the others.
+ */
+export type ProviderLookup = (intent: EconomicIntent) => Promise<ProviderState | null>;
 
 export interface RelayDependencies {
   readonly nonces: NonceStore;
@@ -71,8 +114,16 @@ export interface RelayDependencies {
   readonly verifySignature: SignatureVerifier;
   readonly lookupProvider: ProviderLookup;
   /** Mandate + spend context for the buyer. Absent mandate means denial. */
+  /**
+   * The buyer's mandate and current spend context.
+   *
+   * Takes the whole intent rather than just the agent id, because the balance
+   * that matters is the balance of the asset this intent would spend, on the
+   * network it would spend it on. An agent's Arc USDC balance says nothing
+   * about whether it can make an XRPL payment.
+   */
   readonly loadBuyerPolicy: (
-    agentId: string,
+    intent: EconomicIntent,
   ) => Promise<{ mandate: EconomicMandate | null; context: MandateContext } | null>;
   /**
    * A live price for an asset with no registered USD peg.
@@ -82,6 +133,16 @@ export interface RelayDependencies {
    * unvaluable spend is an uncheckable spend.
    */
   readonly loadPriceQuote?: (assetId: string) => Promise<PriceQuote | null>;
+  /**
+   * Whether the recovered signer may commit the buyer agent's money.
+   *
+   * Omitting it denies every submission. A relay that cannot establish who owns
+   * an agent cannot safely accept an authorization naming it, and defaulting to
+   * "allow" would make the signature check decorative.
+   */
+  readonly authorizeSigner?: SignerAuthorization;
+  /** Where economic decisions are recorded. Failures here never fail a request. */
+  readonly audit?: AuditSink;
   readonly timing?: IntentTimingRules;
   readonly now?: () => Date;
 }
@@ -137,10 +198,37 @@ export class IntentRelay {
       return { accepted: false, intentId: intent.intentId, hash, violations: structural.violations };
     }
 
-    // An intent id is derived from content; a duplicate submission of the same
-    // id is idempotent rather than an error, but must not re-enter the pipeline.
+    // An intent id is derived from content, so the same buyer resubmitting the
+    // same authorization is idempotent rather than an error.
+    //
+    // The signer is re-checked before saying so. Without that, anyone who
+    // learned an intent id could submit it with their own signature and get a
+    // 200 back — a way to confirm, and appear to have authorized, someone
+    // else's intent.
     const existing = await this.deps.intents.get(intent.intentId);
     if (existing) {
+      if (existing.signer.toLowerCase() !== signer.toLowerCase()) {
+        await this.record({
+          action: "intent.rejected",
+          intentId: intent.intentId,
+          signer,
+          outcome: "DENY",
+          detail: { reason: "intent already submitted by a different signer", hash },
+          at: now,
+        });
+        return {
+          accepted: false,
+          intentId: intent.intentId,
+          hash,
+          violations: [
+            violation(
+              "SIGNER_MISMATCH",
+              "this intent was already submitted by a different signer",
+              { existingSigner: existing.signer, signer },
+            ),
+          ],
+        };
+      }
       return {
         accepted: existing.status === "OPEN",
         intentId: intent.intentId,
@@ -167,7 +255,7 @@ export class IntentRelay {
       };
     }
 
-    const provider = await this.deps.lookupProvider(intent.providerAgentId);
+    const provider = await this.deps.lookupProvider(intent);
     if (!provider || !provider.available) {
       violations.push(
         violation("PROVIDER_UNAVAILABLE", "provider is not currently available", {
@@ -186,7 +274,7 @@ export class IntentRelay {
       );
     }
 
-    const policy = await this.deps.loadBuyerPolicy(intent.buyerAgentId);
+    const policy = await this.deps.loadBuyerPolicy(intent);
     let mandateDecision: MandateDecision | undefined;
     if (!policy) {
       violations.push(
@@ -238,8 +326,40 @@ export class IntentRelay {
       );
     }
 
+    // A valid signature proves someone signed; it does not prove they may spend
+    // this agent's money. Without this check anyone with a wallet could author a
+    // well-formed authorization naming someone else's agent as the buyer.
+    const authorized = this.deps.authorizeSigner
+      ? await this.deps.authorizeSigner(intent.buyerAgentId, signer)
+      : false;
+    if (!authorized) {
+      violations.push(
+        violation(
+          "SIGNER_MISMATCH",
+          this.deps.authorizeSigner
+            ? `signer ${signer} is not authorized to commit funds for ${intent.buyerAgentId}`
+            : "this relay cannot establish agent ownership, so it accepts no authorizations",
+          { signer, buyerAgentId: intent.buyerAgentId },
+        ),
+      );
+    }
+
     if (violations.length > 0) {
-      return { accepted: false, intentId: intent.intentId, hash, violations, ...(mandateDecision ? { mandate: mandateDecision } : {}) };
+      await this.record({
+        action: "intent.rejected",
+        intentId: intent.intentId,
+        signer,
+        outcome: "DENY",
+        detail: { codes: violations.map((v) => v.code).join(","), hash },
+        at: now,
+      });
+      return {
+        accepted: false,
+        intentId: intent.intentId,
+        hash,
+        violations,
+        ...(mandateDecision ? { mandate: mandateDecision } : {}),
+      };
     }
 
     const reserved = await this.deps.nonces.reserve(key);
@@ -260,6 +380,15 @@ export class IntentRelay {
       signer,
       receivedAt: now,
       status: "OPEN",
+    });
+
+    await this.record({
+      action: "intent.accepted",
+      intentId: intent.intentId,
+      signer,
+      outcome: "ALLOW",
+      detail: { hash, service: intent.service, nonce: intent.nonce },
+      at: now,
     });
 
     return {
@@ -291,15 +420,66 @@ export class IntentRelay {
     const stored = await this.get(intentId);
     if (!stored || stored.status !== "OPEN") return false;
     await this.deps.intents.updateStatus(intentId, "CONSUMED");
+    await this.record({
+      action: "intent.consumed",
+      intentId,
+      signer: stored.signer,
+      outcome: "ALLOW",
+      detail: { hash: stored.hash },
+      at: this.now(),
+    });
     return true;
   }
 
-  /** Cancel an intent. The nonce stays burned so the signature cannot be reused. */
-  async cancel(intentId: string): Promise<boolean> {
+  /**
+   * Cancel an intent.
+   *
+   * Only the agent's authorized signer may cancel, and the nonce stays burned
+   * either way — releasing it would re-open the replay window the burn exists
+   * to close, and the holder of the original signature could simply resubmit.
+   */
+  async cancel(intentId: string, requestedBy?: string): Promise<boolean> {
     const stored = await this.get(intentId);
     if (!stored || stored.status !== "OPEN") return false;
+
+    if (requestedBy !== undefined) {
+      const permitted = this.deps.authorizeSigner
+        ? await this.deps.authorizeSigner(stored.intent.buyerAgentId, requestedBy)
+        : false;
+      if (!permitted) {
+        await this.record({
+          action: "intent.cancelled",
+          intentId,
+          signer: requestedBy,
+          outcome: "DENY",
+          detail: { reason: "not authorized to cancel this agent's authorization" },
+          at: this.now(),
+        });
+        return false;
+      }
+    }
+
     await this.deps.intents.updateStatus(intentId, "CANCELLED");
+    await this.record({
+      action: "intent.cancelled",
+      intentId,
+      signer: requestedBy ?? stored.signer,
+      outcome: "ALLOW",
+      detail: { hash: stored.hash },
+      at: this.now(),
+    });
     return true;
+  }
+
+  /** Record an economic decision. An audit failure never fails the request. */
+  private async record(event: RelayAuditEvent): Promise<void> {
+    if (!this.deps.audit) return;
+    try {
+      await this.deps.audit(event);
+    } catch {
+      // The decision has already been made deterministically; losing its
+      // audit line must not change the answer the caller receives.
+    }
   }
 
   /** Drop expired intents. Nonces are never released — that is the point. */

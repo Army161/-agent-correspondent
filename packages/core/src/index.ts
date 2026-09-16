@@ -18,6 +18,7 @@ export * from "./mandate/engine";
 export * from "./intent/schema";
 export * from "./intent/eip712";
 export * from "./intent/compile";
+export * from "./intent/signature";
 export * from "./bounds/index";
 export * from "./relay/index";
 export * from "./discovery/index";

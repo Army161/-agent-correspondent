@@ -76,6 +76,8 @@ function harness(overrides: { now?: () => Date } = {}): Harness {
     nonces: stores.nonces,
     intents: stores.intents,
     verifySignature: async () => signatureValid.value,
+    // The buyer agent in these fixtures is owned by SIGNER.
+    authorizeSigner: async (_agentId, signer) => signer.toLowerCase() === SIGNER.toLowerCase(),
     lookupProvider: async () => providerState.value,
     loadBuyerPolicy: async () => ({
       mandate,
@@ -126,6 +128,20 @@ describe("ATTACK: replay", () => {
     const result = await relay.submit(second, "0xsig", SIGNER);
     expect(result.accepted).toBe(false);
     expect(result.violations.map((v) => v.code)).toContain("NONCE_REUSED");
+  });
+
+  it("ATTACK: a second signer cannot claim an intent that is already stored", async () => {
+    const { relay } = harness();
+    const intent = intentWithNonce(NONCE_A);
+    await relay.submit(intent, "0xsig", SIGNER);
+
+    // Anyone who learns an intent id could otherwise submit it with their own
+    // signature and receive an acceptance — appearing to have authorized
+    // someone else's payment.
+    const other = "0x9999999999999999999999999999999999999999";
+    const result = await relay.submit(intent, "0xtheirs", other);
+    expect(result.accepted).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain("SIGNER_MISMATCH");
   });
 
   it("treats a duplicate submission of the same intent as idempotent, not as a second authorization", async () => {
@@ -182,6 +198,108 @@ describe("ATTACK: replay", () => {
   });
 });
 
+describe("ATTACK: signing for an agent you do not own", () => {
+  const OTHER = "0x9999999999999999999999999999999999999999";
+
+  it("rejects a perfectly valid signature from a wallet that does not own the agent", async () => {
+    const { relay } = harness();
+    // The signature verifies. The signer simply has no claim on this agent's
+    // money, and a relay that stopped at "the signature is valid" would let
+    // anyone with a wallet authorize spending from anyone else's agent.
+    const result = await relay.submit(intentWithNonce(NONCE_A), "0xsig", OTHER);
+    expect(result.accepted).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain("SIGNER_MISMATCH");
+  });
+
+  it("does not burn the nonce when the signer was not authorized", async () => {
+    const { relay, stores } = harness();
+    const intent = intentWithNonce(NONCE_A);
+    await relay.submit(intent, "0xsig", OTHER);
+    expect(await stores.nonces.isUsed(nonceKey(intent, OTHER))).toBe(false);
+    expect(await stores.nonces.isUsed(nonceKey(intent, SIGNER))).toBe(false);
+  });
+
+  it("denies everything when the relay cannot establish agent ownership at all", async () => {
+    const stores = createMemoryStores();
+    const relay = new IntentRelay({
+      nonces: stores.nonces,
+      intents: stores.intents,
+      verifySignature: async () => true,
+      // No authorizeSigner. A relay that cannot tell who owns an agent has no
+      // basis for accepting an authorization naming it.
+      lookupProvider: async () => provider,
+      loadBuyerPolicy: async () => ({
+        mandate,
+        context: { availableBalance: usd("100"), spentToday: 0n },
+      }),
+      now: () => NOW,
+    });
+    const result = await relay.submit(intentWithNonce(NONCE_A), "0xsig", SIGNER);
+    expect(result.accepted).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain("SIGNER_MISMATCH");
+  });
+
+  it("refuses a cancellation from a wallet that does not own the agent", async () => {
+    const { relay } = harness();
+    const intent = intentWithNonce(NONCE_A);
+    await relay.submit(intent, "0xsig", SIGNER);
+    expect(await relay.cancel(intent.intentId, OTHER)).toBe(false);
+    expect((await relay.get(intent.intentId))?.status).toBe("OPEN");
+    expect(await relay.cancel(intent.intentId, SIGNER)).toBe(true);
+    expect((await relay.get(intent.intentId))?.status).toBe("CANCELLED");
+  });
+});
+
+describe("audit trail", () => {
+  it("records both the acceptance and the refusal", async () => {
+    const stores = createMemoryStores();
+    const events: { action: string; outcome: string }[] = [];
+    const relay = new IntentRelay({
+      nonces: stores.nonces,
+      intents: stores.intents,
+      verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
+      lookupProvider: async () => provider,
+      loadBuyerPolicy: async () => ({
+        mandate,
+        context: { availableBalance: usd("100"), spentToday: 0n },
+      }),
+      audit: async (event) => {
+        events.push({ action: event.action, outcome: event.outcome });
+      },
+      now: () => NOW,
+    });
+
+    await relay.submit(intentWithNonce(NONCE_A), "0xsig", SIGNER);
+    const expensive = unwrap(compileIntent({ ...request, maxSpend: "5", nonce: NONCE_B }, NOW));
+    await relay.submit(expensive, "0xsig", SIGNER);
+
+    expect(events).toContainEqual({ action: "intent.accepted", outcome: "ALLOW" });
+    expect(events).toContainEqual({ action: "intent.rejected", outcome: "DENY" });
+  });
+
+  it("does not fail a submission when the audit sink throws", async () => {
+    const stores = createMemoryStores();
+    const relay = new IntentRelay({
+      nonces: stores.nonces,
+      intents: stores.intents,
+      verifySignature: async () => true,
+      authorizeSigner: async () => true,
+      lookupProvider: async () => provider,
+      loadBuyerPolicy: async () => ({
+        mandate,
+        context: { availableBalance: usd("100"), spentToday: 0n },
+      }),
+      audit: async () => {
+        throw new Error("audit store is down");
+      },
+      now: () => NOW,
+    });
+    const result = await relay.submit(intentWithNonce(NONCE_A), "0xsig", SIGNER);
+    expect(result.accepted).toBe(true);
+  });
+});
+
 describe("ATTACK: forged signatures and providers", () => {
   it("blocks an intent whose signature does not recover to the declared signer", async () => {
     const { relay, signatureValid } = harness();
@@ -232,6 +350,7 @@ describe("ATTACK: bypassing the mandate at the relay", () => {
       nonces: stores.nonces,
       intents: stores.intents,
       verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
       lookupProvider: async () => provider,
       loadBuyerPolicy: async () => null,
       now: () => NOW,
@@ -262,6 +381,7 @@ describe("ATTACK: the intent amount is not a dollar amount", () => {
       nonces: stores.nonces,
       intents: stores.intents,
       verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
       lookupProvider: async () => xrplProvider,
       loadBuyerPolicy: async () => ({
         mandate: economicMandateSchema.parse({
@@ -310,6 +430,7 @@ describe("ATTACK: the intent amount is not a dollar amount", () => {
       nonces: stores.nonces,
       intents: stores.intents,
       verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
       lookupProvider: async () => ({ ...provider, destination: "rProviderAccount" }),
       loadBuyerPolicy: async () => ({
         mandate: economicMandateSchema.parse({
@@ -362,6 +483,7 @@ describe("ATTACK: the intent amount is not a dollar amount", () => {
       nonces: stores.nonces,
       intents: stores.intents,
       verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
       lookupProvider: async () => ({ ...provider, destination: "rProviderAccount" }),
       loadBuyerPolicy: async () => ({
         mandate: economicMandateSchema.parse({
@@ -423,6 +545,7 @@ describe("ATTACK: expiry", () => {
       nonces: stores.nonces,
       intents: stores.intents,
       verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
       lookupProvider: async () => provider,
       loadBuyerPolicy: async () => ({
         mandate,
@@ -444,6 +567,7 @@ describe("ATTACK: expiry", () => {
       nonces: stores.nonces,
       intents: stores.intents,
       verifySignature: async () => true,
+      authorizeSigner: async (_agentId, signer) => signer === SIGNER,
       lookupProvider: async () => provider,
       loadBuyerPolicy: async () => ({
         mandate,

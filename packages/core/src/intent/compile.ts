@@ -347,3 +347,36 @@ export function describeIntent(intent: EconomicIntent): Record<string, string> {
     hash: intentHash(intent),
   };
 }
+
+/**
+ * The canonical wire form of an intent.
+ *
+ * This is what a client signs and hands back to the relay, so every field is
+ * expressed in a form JSON can carry losslessly: atomic amounts as integer
+ * strings (a JSON number cannot hold a uint256) and times as ISO-8601.
+ */
+export function intentToWire(intent: EconomicIntent): Record<string, unknown> {
+  return {
+    intentId: intent.intentId,
+    version: intent.version,
+    buyerAgentId: intent.buyerAgentId,
+    providerAgentId: intent.providerAgentId,
+    service: intent.service,
+    serviceHash: intent.serviceHash,
+    maxSpend: intent.maxSpend.toString(10),
+    minReceive: intent.minReceive.toString(10),
+    settlementAsset: intent.settlementAsset,
+    allowedRails: [...intent.allowedRails],
+    maxFxSlippageBps: intent.maxFxSlippageBps,
+    maxNetworkFee: intent.maxNetworkFee.toString(10),
+    evaluator: intent.evaluator,
+    deadline: new Date(intent.deadline * 1000).toISOString(),
+    nonce: intent.nonce,
+    createdAt: new Date(intent.createdAt * 1000).toISOString(),
+    expiresAt: new Date(intent.expiresAt * 1000).toISOString(),
+    chainId: intent.chainId,
+    verifyingContract: intent.verifyingContract,
+    destination: intent.destination,
+    network: intent.network,
+  };
+}
