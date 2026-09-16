@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/primitives";
 import { describeSavings } from "@acor/core";
 import { currentUser } from "@/lib/auth";
-import { AWAITING, relativeTime, truncateMiddle, usdSmart } from "@/lib/format";
+import { AWAITING, relativeTime, truncateMiddle, usdDisplay } from "@/lib/format";
 import { getClearing } from "@/lib/platform";
 
 export const metadata: Metadata = {
@@ -42,11 +42,11 @@ export default async function ClearingPage(): Promise<React.JSX.Element> {
           <div className="grid divide-y divide-[var(--color-border)] sm:grid-cols-2 sm:divide-x lg:grid-cols-4 lg:divide-y-0">
             <Metric
               label="Gross obligations"
-              value={view.state === "READY" ? usdSmart(view.data.grossTotal) : AWAITING}
+              value={view.state === "READY" ? usdDisplay(view.data.grossTotal) : AWAITING}
             />
             <Metric
               label="Net after clearing"
-              value={projected ? usdSmart(projected.netTotal) : AWAITING}
+              value={projected ? usdDisplay(projected.netTotal) : AWAITING}
               tone="cyan"
             />
             <Metric
@@ -91,20 +91,20 @@ export default async function ClearingPage(): Promise<React.JSX.Element> {
                         <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--color-subtle)]">
                           A → B
                         </div>
-                        <div className="tabular mt-1 text-[13px]">{usdSmart(position.grossAToB)}</div>
+                        <div className="tabular mt-1 text-[13px]">{usdDisplay(position.grossAToB)}</div>
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--color-subtle)]">
                           B → A
                         </div>
-                        <div className="tabular mt-1 text-[13px]">{usdSmart(position.grossBToA)}</div>
+                        <div className="tabular mt-1 text-[13px]">{usdDisplay(position.grossBToA)}</div>
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-[0.1em] text-[var(--color-cyan)]">
                           Net
                         </div>
                         <div className="tabular mt-1 text-[13px] text-[var(--color-cyan)]">
-                          {position.netDebtor ? usdSmart(position.netAmount) : "cancels"}
+                          {position.netDebtor ? usdDisplay(position.netAmount) : "cancels"}
                         </div>
                       </div>
                     </div>
@@ -130,7 +130,7 @@ export default async function ClearingPage(): Promise<React.JSX.Element> {
                   <span className="tabular truncate text-[12px] text-[var(--color-muted)]">
                     {truncateMiddle(instruction.from, 8, 4)} → {truncateMiddle(instruction.to, 8, 4)}
                   </span>
-                  <span className="tabular text-[13px]">{usdSmart(instruction.amount)}</span>
+                  <span className="tabular text-[13px]">{usdDisplay(instruction.amount)}</span>
                 </li>
               ))}
             </ul>
@@ -165,8 +165,8 @@ export default async function ClearingPage(): Promise<React.JSX.Element> {
                     </Badge>
                   </div>
                   <dl className="mt-2">
-                    <Field label="Gross" value={usdSmart(cycle.gross)} mono />
-                    <Field label="Net" value={usdSmart(cycle.net)} mono />
+                    <Field label="Gross" value={usdDisplay(cycle.gross)} mono />
+                    <Field label="Net" value={usdDisplay(cycle.net)} mono />
                     <Field label="Entries → transfers" value={`${cycle.entryCount} → ${cycle.instructionCount}`} mono />
                     <Field label="Proof" value={truncateMiddle(cycle.proofHash, 10, 8)} mono />
                   </dl>

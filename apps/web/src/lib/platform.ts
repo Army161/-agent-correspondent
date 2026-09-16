@@ -84,6 +84,11 @@ export interface AgentSummary {
 
 export async function listAgents(organizationId: string): Promise<DataView<AgentSummary[]>> {
   return withDb<AgentSummary[]>(async (db) => {
+    // Counted with joins rather than correlated subqueries: Drizzle renders a
+    // column interpolated into a `sql` subquery without its table
+    // qualification, so `where agent_id = id` silently resolves against the
+    // inner table and every count comes back zero. COUNT(DISTINCT ...) keeps
+    // the three joins from multiplying each other.
     const rows = await db
       .select({
         id: agents.id,
@@ -93,12 +98,16 @@ export async function listAgents(organizationId: string): Promise<DataView<Agent
         model: agents.model,
         status: agents.status,
         createdAt: agents.createdAt,
-        capabilityCount: sql<number>`(select count(*) from ${agentCapabilities} where ${agentCapabilities.agentId} = ${agents.id})`,
-        walletCount: sql<number>`(select count(*) from ${agentWallets} where ${agentWallets.agentId} = ${agents.id})`,
-        mandateCount: sql<number>`(select count(*) from ${economicMandates} where ${economicMandates.agentId} = ${agents.id})`,
+        capabilityCount: sql<number>`count(distinct ${agentCapabilities.id})`,
+        walletCount: sql<number>`count(distinct ${agentWallets.id})`,
+        mandateCount: sql<number>`count(distinct ${economicMandates.id})`,
       })
       .from(agents)
+      .leftJoin(agentCapabilities, eq(agentCapabilities.agentId, agents.id))
+      .leftJoin(agentWallets, eq(agentWallets.agentId, agents.id))
+      .leftJoin(economicMandates, eq(economicMandates.agentId, agents.id))
       .where(eq(agents.organizationId, organizationId))
+      .groupBy(agents.id)
       .orderBy(desc(agents.createdAt));
 
     if (rows.length === 0) return { state: "EMPTY" };

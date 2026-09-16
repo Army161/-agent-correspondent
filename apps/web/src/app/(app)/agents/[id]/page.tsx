@@ -13,7 +13,7 @@ import {
   stateTone,
 } from "@/components/ui/primitives";
 import { currentUser } from "@/lib/auth";
-import { latencyDisplay, percentDisplay, scoreDisplay, truncateMiddle, usdSmart } from "@/lib/format";
+import { latencyDisplay, percentDisplay, scoreDisplay, truncateMiddle, usdDisplay } from "@/lib/format";
 import { getAgent } from "@/lib/platform";
 
 export const metadata: Metadata = { title: "Agent" };
@@ -69,8 +69,8 @@ export default async function AgentDetailPage({
           />
           <div className="grid divide-y divide-[var(--color-border)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
             <Metric label="Reputation" value={scoreDisplay(reputation.score)} hint={`${reputation.completedJobs} completed jobs`} tone="cyan" />
-            <Metric label="μLedger receivable" value={usdSmart(ledger.receivable)} />
-            <Metric label="μLedger payable" value={usdSmart(ledger.payable)} />
+            <Metric label="μLedger receivable" value={usdDisplay(ledger.receivable)} />
+            <Metric label="μLedger payable" value={usdDisplay(ledger.payable)} />
           </div>
         </Panel>
 
@@ -108,7 +108,7 @@ export default async function AgentDetailPage({
                     </div>
                   </div>
                   <div className="tabular flex gap-6 text-[13px]">
-                    <span>{usdSmart(capability.price)}</span>
+                    <span>{usdDisplay(capability.price)}</span>
                     <span className="text-[var(--color-muted)]">
                       {latencyDisplay(capability.latencyMs)}
                     </span>
@@ -124,15 +124,15 @@ export default async function AgentDetailPage({
           <div className="px-5 pb-4">
             {mandate ? (
               <dl>
-                <Field label="Daily limit" value={usdSmart(mandate.dailySpendLimitUsd)} mono />
-                <Field label="Per transaction" value={usdSmart(mandate.maxTransactionUsd)} mono />
-                <Field label="Minimum reserve" value={usdSmart(mandate.minimumReserveUsd)} mono />
+                <Field label="Daily limit" value={usdDisplay(mandate.dailySpendLimitUsd)} mono />
+                <Field label="Per transaction" value={usdDisplay(mandate.maxTransactionUsd)} mono />
+                <Field label="Minimum reserve" value={usdDisplay(mandate.minimumReserveUsd)} mono />
                 <Field
                   label="Unverified limit"
-                  value={usdSmart(mandate.unverifiedCounterpartyLimitUsd)}
+                  value={usdDisplay(mandate.unverifiedCounterpartyLimitUsd)}
                   mono
                 />
-                <Field label="Human approval above" value={usdSmart(mandate.humanApprovalAboveUsd)} mono />
+                <Field label="Human approval above" value={usdDisplay(mandate.humanApprovalAboveUsd)} mono />
                 <Divider className="my-2" />
                 <Field label="Assets" value={mandate.allowedAssets.join(", ")} />
                 <Field label="Networks" value={mandate.allowedNetworks.join(", ")} />
@@ -184,7 +184,7 @@ export default async function AgentDetailPage({
                 <dl>
                   <Field label="Score" value={scoreDisplay(reputation.score)} mono />
                   <Field label="Success rate" value={percentDisplay(reputation.successRate)} mono />
-                  <Field label="Settled value" value={usdSmart(reputation.settledValue)} mono />
+                  <Field label="Settled value" value={usdDisplay(reputation.settledValue)} mono />
                   <Field label="Counterparties" value={String(reputation.distinctCounterparties)} mono />
                   <Field label="Disputes" value={String(reputation.disputes)} mono />
                 </dl>

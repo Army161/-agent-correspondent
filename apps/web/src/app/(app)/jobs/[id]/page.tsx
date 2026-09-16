@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/primitives";
 import { allowedTransitions, isTerminal, requiresEscrow, type JobState } from "@acor/core";
 import { currentUser } from "@/lib/auth";
-import { relativeTime, truncateMiddle, usdSmart } from "@/lib/format";
+import { relativeTime, truncateMiddle, usdDisplay } from "@/lib/format";
 import { getJob } from "@/lib/platform";
 
 export const metadata: Metadata = { title: "Job" };
@@ -81,7 +81,7 @@ export default async function JobDetailPage({
           <PanelHeader title="Escrow" description="Funds held against delivery." />
           <div className="px-5 pb-4">
             <dl>
-              <Field label="Held" value={job.escrow === null ? "—" : usdSmart(job.escrow)} mono />
+              <Field label="Held" value={job.escrow === null ? "—" : usdDisplay(job.escrow)} mono />
               <Field label="Asset" value={job.settlementAsset ?? "—"} />
               <Field label="Network" value={job.network ?? "—"} />
               <Field

@@ -5,7 +5,7 @@ import { DataState } from "@/components/shell/data-state";
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge, Panel, stateTone } from "@/components/ui/primitives";
 import { currentUser } from "@/lib/auth";
-import { relativeTime, usdSmart } from "@/lib/format";
+import { relativeTime, usdDisplay } from "@/lib/format";
 import { listJobs } from "@/lib/platform";
 
 export const metadata: Metadata = {
@@ -75,7 +75,7 @@ export default async function JobsPage(): Promise<React.JSX.Element> {
                     </div>
                   </div>
                   <div className="tabular text-right text-[13px]">
-                    <div>{job.escrow === null ? "—" : usdSmart(job.escrow)}</div>
+                    <div>{job.escrow === null ? "—" : usdDisplay(job.escrow)}</div>
                     <div className="text-[var(--color-muted)]">
                       {job.settlementAsset ?? "—"} {job.network ? `on ${job.network}` : ""}
                     </div>

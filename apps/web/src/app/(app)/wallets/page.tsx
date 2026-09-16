@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/primitives";
 import { probeAll } from "@acor/adapters";
 import { currentUser } from "@/lib/auth";
-import { AWAITING, truncateMiddle, usdSmart } from "@/lib/format";
+import { AWAITING, truncateMiddle, usdDisplay } from "@/lib/format";
 import { getLedgerTotals, listWallets } from "@/lib/platform";
 
 export const metadata: Metadata = {
@@ -60,7 +60,7 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
             <Metric label="XRPL XRP" value={anyRailReady ? AWAITING : "NOT CONNECTED"} tone="muted" />
             <Metric
               label="Pending escrow"
-              value={totals.state === "READY" ? usdSmart(totals.data.pendingEscrow) : AWAITING}
+              value={totals.state === "READY" ? usdDisplay(totals.data.pendingEscrow) : AWAITING}
               tone="muted"
             />
           </div>
@@ -104,8 +104,8 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
           <div className="pb-2">
             {totals.state === "READY" ? (
               <>
-                <Metric label="Receivables" value={usdSmart(totals.data.receivable)} />
-                <Metric label="Payables" value={usdSmart(totals.data.payable)} />
+                <Metric label="Receivables" value={usdDisplay(totals.data.receivable)} />
+                <Metric label="Payables" value={usdDisplay(totals.data.payable)} />
               </>
             ) : (
               <EmptyState
