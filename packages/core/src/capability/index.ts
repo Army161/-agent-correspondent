@@ -24,6 +24,12 @@ export type CapabilityId =
   | "ARC.USDC_GAS"
   | "ARC.X402"
   | "ARC.CIRCLE_NANOPAYMENT"
+  // Circle products. Deliberately separate: valid credentials say nothing about
+  // whether Gateway covers a chain or whether nanopayments are enabled.
+  | "CIRCLE.CREDENTIALS"
+  | "CIRCLE.WALLETS"
+  | "CIRCLE.GATEWAY"
+  | "CIRCLE.NANOPAYMENTS"
   // XRPL
   | "XRPL.PAYMENTS"
   | "XRPL.PATHFINDING"
@@ -67,7 +73,11 @@ export const DEFAULT_CAPABILITIES: readonly CapabilityRecord[] = Object.freeze([
   cap("ARC.ERC8183", "UNKNOWN", "requires a deployed job registry address"),
   cap("ARC.USDC_GAS", "UNKNOWN", "verified by probing the configured Arc RPC"),
   cap("ARC.X402", "UNKNOWN", "requires a configured x402 facilitator"),
-  cap("ARC.CIRCLE_NANOPAYMENT", "UNKNOWN", "requires Circle API credentials"),
+  cap("ARC.CIRCLE_NANOPAYMENT", "UNKNOWN", "requires Circle nanopayments on Arc; never inferred from a credential check"),
+  cap("CIRCLE.CREDENTIALS", "UNKNOWN", "requires Circle API credentials"),
+  cap("CIRCLE.WALLETS", "UNKNOWN", "requires a reachable Circle wallet set"),
+  cap("CIRCLE.GATEWAY", "UNKNOWN", "Gateway chain coverage must be read from Circle at runtime"),
+  cap("CIRCLE.NANOPAYMENTS", "UNKNOWN", "requires nanopayments enabled for the configured account"),
   cap("XRPL.PAYMENTS", "UNKNOWN", "verified by probing the configured XRPL node"),
   cap("XRPL.PATHFINDING", "UNKNOWN", "verified by probing the configured XRPL node"),
   cap("XRPL.ESCROW", "UNKNOWN", "verified by probing the configured XRPL node"),

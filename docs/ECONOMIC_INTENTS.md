@@ -13,8 +13,8 @@ executor may do is inside the struct; anything not stated is forbidden.
 | `buyerAgentId` / `providerAgentId` | the two parties; they must differ |
 | `service` | human-readable service identifier |
 | `serviceHash` | hash of the full work request the provider must perform |
-| `maxSpend` | hard ceiling on everything leaving the buyer, fees included |
-| `minReceive` | floor on what the provider must receive, for FX/bridged routes |
+| `maxSpend` | hard ceiling on everything leaving the buyer, **in settlement-asset atomic units**, fees included |
+| `minReceive` | floor on what the provider must receive, in settlement-asset atomic units |
 | `settlementAsset` | the asset; substituting it invalidates the authorization |
 | `allowedRails` | the rails this authorization permits |
 | `maxFxSlippageBps` | tolerated drift from the quoted received amount |
@@ -52,15 +52,18 @@ derived from whatever fields happen to be on the object, so the struct the UI
 shows, the struct we hash, and the struct a contract decodes are the same
 struct.
 
-Two conversions happen during compilation, and both are deliberate:
+One conversion happens during compilation, and it is deliberate: free-form
+identifiers (agent ids, asset symbol, evaluator, destination, network, rail
+list) are `keccak256`-hashed into `bytes32`. Truncating them into 32 bytes would
+let `agent_184a` and `agent_184b` collide.
 
-- Free-form identifiers (agent ids, asset symbol, evaluator, destination,
-  network, rail list) are `keccak256`-hashed into `bytes32`. Truncating them
-  into 32 bytes would let `agent_184a` and `agent_184b` collide.
-- `maxSpend`, `minReceive` and `maxNetworkFee` are converted from nanodollars
-  into the settlement asset's own base units, because that is the number a
-  contract will move. The conversion is **exact**; an amount the rail cannot
-  represent fails compilation rather than being rounded.
+Amounts need no conversion. An intent already carries them as atomic units of
+its settlement asset — `0.025` USDC is parsed as `25000` at compile time, and
+`1` RLUSD as `1e18` — which is exactly what a contract moves. A single shared
+dollar scale would have made those two identical. Parsing is **exact**; an
+amount the rail cannot represent fails compilation rather than being rounded,
+and an intent in an unregistered asset cannot be compiled at all, because
+without a registered scale the number means nothing.
 
 The rail allowlist is canonicalized (deduplicated and sorted) before hashing, so
 `["X402","MULEDGER"]` and `["MULEDGER","X402"]` are the same authorization and

@@ -8,10 +8,13 @@ import { domainHash } from "../canonical/json";
 import { sha256Hex } from "../canonical/sha256";
 import { fail, ok, violation, type EconomicViolation, type Outcome } from "../errors/index";
 import { newNonce } from "../ids/index";
-import { formatUsd } from "../units/money";
+import { amountFromAtomic, formatAmount } from "../assets/amount";
+import { assetDefinition, canonicalAssetId } from "../assets/registry";
+import { parseDecimalToAtomic } from "../units/decimal";
 import { canonicalRails } from "./eip712";
 import {
   economicIntentSchema,
+  intentAssetId,
   INTENT_VERSION,
   type EconomicIntent,
   type EconomicIntentInput,
@@ -139,7 +142,7 @@ export function validateIntent(
     violations.push(
       violation(
         "INTENT_MALFORMED",
-        `minReceive ${formatUsd(intent.minReceive, { symbol: true })} exceeds maxSpend ${formatUsd(intent.maxSpend, { symbol: true })}`,
+        `minReceive ${describeAmount(intent, intent.minReceive)} exceeds maxSpend ${describeAmount(intent, intent.maxSpend)}`,
         { minReceive: intent.minReceive, maxSpend: intent.maxSpend },
       ),
     );
@@ -158,6 +161,19 @@ export function validateIntent(
     violations.push(violation("INVALID_AMOUNT", "maxSpend must be greater than zero"));
   }
 
+  // An amount is only meaningful alongside the scale it is counted in, so an
+  // intent settling in an unregistered asset is malformed rather than merely
+  // unsupported.
+  if (!assetDefinition(intentAssetId(intent))) {
+    violations.push(
+      violation(
+        "UNKNOWN_ASSET",
+        `intent settles in ${intent.settlementAsset} on ${intent.network}, which is not a registered asset`,
+        { assetId: intentAssetId(intent) },
+      ),
+    );
+  }
+
   if (intent.buyerAgentId === intent.providerAgentId) {
     violations.push(
       violation("INTENT_MALFORMED", "buyer and provider must be different agents", {
@@ -169,14 +185,25 @@ export function validateIntent(
   return violations.length > 0 ? fail(violations) : ok(intent);
 }
 
+/** Render an intent amount at its settlement asset's scale. */
+function describeAmount(
+  intent: { network: string; settlementAsset: string },
+  atomic: bigint,
+): string {
+  const definition = assetDefinition(intentAssetId(intent));
+  if (!definition) return `${atomic} (unknown scale)`;
+  return formatAmount(amountFromAtomic(atomic, definition.id));
+}
+
 export interface CompileIntentRequest {
   readonly buyerAgentId: string;
   readonly providerAgentId: string;
   readonly service: string;
   /** The work request itself; hashed into `serviceHash`. */
   readonly servicePayload: unknown;
-  readonly maxSpend: string | number | bigint;
-  readonly minReceive?: string | number | bigint;
+  /** Decimal string in the settlement asset, e.g. "0.025" USDC. Never dollars. */
+  readonly maxSpend: string | bigint;
+  readonly minReceive?: string | bigint;
   readonly settlementAsset: EconomicIntentInput["settlementAsset"];
   readonly allowedRails: EconomicIntentInput["allowedRails"];
   readonly network: EconomicIntentInput["network"];
@@ -185,7 +212,7 @@ export interface CompileIntentRequest {
   readonly chainId: number;
   readonly verifyingContract: string;
   readonly maxFxSlippageBps?: number;
-  readonly maxNetworkFee?: string | number | bigint;
+  readonly maxNetworkFee?: string | bigint;
   /** Seconds the authorization stays valid. */
   readonly ttlSeconds?: number;
   /** Seconds the provider has to deliver. Defaults to the full TTL. */
@@ -212,6 +239,39 @@ export function compileIntent(
   const nonce = request.nonce ?? newNonce();
   const serviceHash = serviceHashOf(request.servicePayload);
 
+  // Amounts are parsed at the settlement asset's own scale. This is the point
+  // at which "0.025 USDC" becomes 25000, and at which "0.025 XRP" would become
+  // 25000 drops instead — the two are different quantities of different things,
+  // and nothing downstream has to know which.
+  const assetId = canonicalAssetId(request.network, request.settlementAsset);
+  const definition = assetDefinition(assetId);
+  if (!definition) {
+    return fail(
+      violation(
+        "UNKNOWN_ASSET",
+        `cannot compile an intent in ${request.settlementAsset} on ${request.network}: the asset is not registered, so its atomic scale is unknown`,
+        { assetId },
+      ),
+    );
+  }
+
+  const amounts: Record<string, bigint> = {};
+  for (const [field, value] of [
+    ["maxSpend", request.maxSpend],
+    ["minReceive", request.minReceive ?? "0"],
+    ["maxNetworkFee", request.maxNetworkFee ?? "0"],
+  ] as const) {
+    const parsedAmount = parseDecimalToAtomic(value, definition.decimals, {
+      allowNegative: false,
+    });
+    if (!parsedAmount.ok) {
+      return fail(
+        parsedAmount.violations.map((v) => ({ ...v, message: `${field}: ${v.message}` })),
+      );
+    }
+    amounts[field] = parsedAmount.value;
+  }
+
   const draft: EconomicIntentInput = {
     intentId: "intent_pending",
     version: INTENT_VERSION,
@@ -219,12 +279,12 @@ export function compileIntent(
     providerAgentId: request.providerAgentId,
     service: request.service,
     serviceHash,
-    maxSpend: request.maxSpend,
-    minReceive: request.minReceive ?? 0,
+    maxSpend: amounts.maxSpend as bigint,
+    minReceive: amounts.minReceive as bigint,
     settlementAsset: request.settlementAsset,
     allowedRails: request.allowedRails,
     maxFxSlippageBps: request.maxFxSlippageBps ?? 0,
-    maxNetworkFee: request.maxNetworkFee ?? 0,
+    maxNetworkFee: amounts.maxNetworkFee as bigint,
     evaluator: request.evaluator,
     deadline: new Date(deadline * 1000).toISOString(),
     nonce,
@@ -272,9 +332,10 @@ export function describeIntent(intent: EconomicIntent): Record<string, string> {
     service: intent.service,
     buyer: intent.buyerAgentId,
     provider: intent.providerAgentId,
-    maxSpend: formatUsd(intent.maxSpend, { symbol: true }),
-    minReceive: formatUsd(intent.minReceive, { symbol: true }),
-    maxNetworkFee: formatUsd(intent.maxNetworkFee, { symbol: true }),
+    maxSpend: describeAmount(intent, intent.maxSpend),
+    minReceive: describeAmount(intent, intent.minReceive),
+    maxNetworkFee: describeAmount(intent, intent.maxNetworkFee),
+    settlementAssetId: intentAssetId(intent),
     settlementAsset: intent.settlementAsset,
     network: intent.network,
     rails: canonicalRails(intent.allowedRails),

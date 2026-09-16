@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/primitives";
 import { probeAll } from "@acor/adapters";
 import { currentUser } from "@/lib/auth";
-import { AWAITING, truncateMiddle, usdDisplay } from "@/lib/format";
+import { AWAITING, NO_VALUATION, truncateMiddle, usdDisplay } from "@/lib/format";
 import { getLedgerTotals, listWallets } from "@/lib/platform";
 
 export const metadata: Metadata = {
@@ -55,9 +55,26 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
             }
           />
           <div className="grid divide-y divide-[var(--color-border)] sm:grid-cols-2 sm:divide-x lg:grid-cols-4 lg:divide-y-0">
-            <Metric label="Arc USDC" value={anyRailReady ? AWAITING : "NOT CONNECTED"} tone="muted" />
-            <Metric label="XRPL RLUSD" value={anyRailReady ? AWAITING : "NOT CONNECTED"} tone="muted" />
-            <Metric label="XRPL XRP" value={anyRailReady ? AWAITING : "NOT CONNECTED"} tone="muted" />
+            <Metric
+              label="Arc USDC"
+              value={anyRailReady ? AWAITING : "NOT CONNECTED"}
+              hint="USD-par by registered peg"
+              tone="muted"
+            />
+            <Metric
+              label="XRPL RLUSD"
+              value={anyRailReady ? AWAITING : "NOT CONNECTED"}
+              hint="USD-par by registered peg"
+              tone="muted"
+            />
+            <Metric
+              label="XRPL XRP"
+              value={anyRailReady ? AWAITING : "NOT CONNECTED"}
+              // XRP has no peg. Its balance is a quantity of XRP; a dollar
+              // figure needs a live price this deployment does not have.
+              hint={anyRailReady ? `USD value: ${NO_VALUATION}` : "no price source configured"}
+              tone="muted"
+            />
             <Metric
               label="Pending escrow"
               value={totals.state === "READY" ? usdDisplay(totals.data.pendingEscrow) : AWAITING}

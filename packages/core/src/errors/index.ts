@@ -13,6 +13,10 @@ export type EconomicErrorCode =
   | "PRECISION_LOSS"
   | "UNKNOWN_ASSET"
   | "UNKNOWN_NETWORK"
+  | "ASSET_MISMATCH"
+  // valuation
+  | "VALUATION_UNAVAILABLE"
+  | "VALUATION_STALE"
   // mandate
   | "ASSET_NOT_ALLOWED"
   | "NETWORK_NOT_ALLOWED"

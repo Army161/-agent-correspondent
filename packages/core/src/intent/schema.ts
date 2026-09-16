@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 
-import { parseUsd, type Nanos } from "../units/money";
+import { canonicalAssetId, type AssetId } from "../assets/registry";
 import { ASSET_SYMBOLS, NETWORK_IDS } from "../mandate/schema";
 
 export const INTENT_VERSION = 1 as const;
@@ -25,18 +25,31 @@ export const SETTLEMENT_RAILS = [
 
 export type SettlementRail = (typeof SETTLEMENT_RAILS)[number];
 
-const nanoAmount = z
-  .union([z.string(), z.number(), z.bigint()])
-  .transform((value, ctx): Nanos => {
-    const parsed = parseUsd(value);
-    if (!parsed.ok) {
-      ctx.addIssue({ code: "custom", message: parsed.violations[0]?.message ?? "invalid amount" });
+/**
+ * Amounts on an intent are **atomic units of the settlement asset**, not
+ * dollars. `maxSpend` for a USDC intent is a count of USDC's smallest unit;
+ * for an XRP intent it is a count of drops. Nothing here assumes a dollar.
+ *
+ * On the wire they are integer strings, because JSON has no bigint and a JSON
+ * number cannot hold a uint256.
+ */
+const atomicAmount = z
+  .union([z.string(), z.bigint()])
+  .transform((value, ctx): bigint => {
+    if (typeof value === "bigint") return value;
+    if (!/^-?\d+$/.test(value.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        message: `atomic amount must be an integer string, got ${JSON.stringify(value)}`,
+      });
       return 0n;
     }
-    return parsed.value;
+    return BigInt(value.trim());
   });
 
-const nonNegative = nanoAmount.refine((n) => n >= 0n, { message: "amount must not be negative" });
+const nonNegative = atomicAmount.refine((n) => n >= 0n, {
+  message: "amount must not be negative",
+});
 
 const hex32 = z
   .string()
@@ -64,9 +77,9 @@ export const economicIntentSchema = z.object({
   service: z.string().min(1).max(256),
   /** Hash of the full service request payload the provider must perform. */
   serviceHash: hex32,
-  /** Hard ceiling on everything that leaves the buyer, fees included. */
+  /** Hard ceiling on everything that leaves the buyer, in settlement-asset atomic units, fees included. */
   maxSpend: nonNegative,
-  /** Floor on what the provider must receive, for FX/bridged routes. */
+  /** Floor on what the provider must receive, in settlement-asset atomic units. */
   minReceive: nonNegative,
   settlementAsset: z.enum(ASSET_SYMBOLS),
   allowedRails: z.array(z.enum(SETTLEMENT_RAILS)).min(1),
@@ -103,3 +116,16 @@ export type SignedEconomicIntent = {
   /** Address expected to have produced `signature`. */
   readonly signer: string;
 };
+
+/**
+ * The canonical asset identity an intent settles in.
+ *
+ * Derived rather than stored, so the identity can never drift from the
+ * `network` and `settlementAsset` that were actually signed.
+ */
+export function intentAssetId(intent: {
+  readonly network: string;
+  readonly settlementAsset: string;
+}): AssetId {
+  return canonicalAssetId(intent.network, intent.settlementAsset);
+}

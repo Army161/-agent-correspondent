@@ -11,13 +11,20 @@
  * amendment-dependent is ever assumed live.
  */
 
-import { Client, dropsToXrp } from "xrpl";
+import { Client } from "xrpl";
 import {
+  amountFromAtomic,
+  assetDefinition,
+  canonicalAssetId,
+  enforceBounds,
   fail,
   ok,
-  parseUsd,
+  parseAmount,
+  registerXrplIssuedCurrency,
+  unregisteredAmount,
+  valueInUsd,
   violation,
-  enforceBounds,
+  type AssetAmount,
   type CapabilityId,
   type Outcome,
   type ProtocolCapabilityEngine,
@@ -170,22 +177,32 @@ export class XrplAdapter implements SettlementAdapter {
       client = await this.connect();
       if (!client) return fail(configurationViolation(this.name, ["XRPL_WS_URL"]));
 
-      const network = this.networks[0] as string;
+      const network = this.networks[0] as "XRPL" | "XRPL_TESTNET";
       const readings: BalanceReading[] = [];
       const wanted = new Set(assets.map((asset) => asset.toUpperCase()));
+      const wantsEverything = wanted.size === 0;
+      const now = new Date();
 
-      if (wanted.has("XRP")) {
+      const wants = (assetId: string, symbol: string): boolean =>
+        wantsEverything || wanted.has(assetId.toUpperCase()) || wanted.has(symbol.toUpperCase());
+
+      const xrpAssetId = canonicalAssetId(network, "XRP");
+      if (wants(xrpAssetId, "XRP")) {
         const account = await client.request({
           command: "account_info",
           account: address,
           ledger_index: "validated",
         });
-        // XRP is not a dollar. The reading carries the XRP amount; converting it
-        // to a dollar figure needs a price oracle this deployment does not have,
-        // so the UI shows the XRP balance and no USD equivalent.
-        const xrp = parseUsd(dropsToXrp(account.result.account_data.Balance).toString());
-        if (!xrp.ok) return xrp as Outcome<readonly BalanceReading[]>;
-        readings.push({ asset: "XRP", network, address, amount: xrp.value, asOf: new Date() });
+        // The ledger reports drops, which *are* XRP's atomic unit. There is no
+        // conversion to perform and, crucially, no dollar to invent: XRP has no
+        // peg, so `usdValue` stays null until a price oracle supplies one.
+        const drops = BigInt(account.result.account_data.Balance);
+        readings.push({
+          amount: amountFromAtomic(drops, xrpAssetId),
+          address,
+          asOf: now,
+          usdValue: null,
+        });
       }
 
       const issued = await client.request({
@@ -193,12 +210,28 @@ export class XrplAdapter implements SettlementAdapter {
         account: address,
         ledger_index: "validated",
       });
+
       for (const line of issued.result.lines) {
         const symbol = decodeCurrency(line.currency);
-        if (!wanted.has(symbol)) continue;
-        const amount = parseUsd(line.balance);
-        if (!amount.ok) continue;
-        readings.push({ asset: symbol, network, address, amount: amount.value, asOf: new Date() });
+        // An issued currency is only meaningful together with its issuer. Two
+        // accounts can both issue something called "RLUSD" and only one of them
+        // is Ripple, so the issuer is part of the identity we resolve.
+        const assetId = canonicalAssetId(network, symbol, line.account);
+        if (!wants(assetId, symbol)) continue;
+
+        const known = assetDefinition(assetId);
+        const parsed = known
+          ? parseAmount(line.balance, assetId)
+          : parseAmount(line.balance, this.registerUnknownIssuer(symbol, line.account, network).id);
+        if (!parsed.ok) continue;
+
+        const valued = valueInUsd(parsed.value, { now });
+        readings.push({
+          amount: parsed.value,
+          address,
+          asOf: now,
+          usdValue: valued.ok ? valued.value : null,
+        });
       }
 
       return ok(readings);
@@ -213,6 +246,29 @@ export class XrplAdapter implements SettlementAdapter {
     } finally {
       await client?.disconnect().catch(() => undefined);
     }
+  }
+
+  /**
+   * Register an issued currency we have not seen before.
+   *
+   * It is registered with **no peg**, whatever it calls itself. A token named
+   * "USD" from an unknown issuer is not a dollar, and this is the exact place
+   * that distinction has to be made rather than assumed.
+   */
+  private registerUnknownIssuer(
+    symbol: string,
+    issuer: string,
+    network: "XRPL" | "XRPL_TESTNET",
+  ): { id: string } {
+    return registerXrplIssuedCurrency({
+      symbol,
+      issuer,
+      network,
+      peg: {
+        kind: "NONE",
+        note: `Issuer ${issuer} is not a registered peg authority for ${symbol}; no USD value is assumed.`,
+      },
+    });
   }
 
   async settle(request: SettlementRequest): Promise<Outcome<SettlementResult>> {

@@ -9,10 +9,13 @@
  */
 
 import { violation, type EconomicViolation } from "../errors/index";
+import { amountFromAtomic } from "../assets/amount";
+import { assetDefinition } from "../assets/registry";
+import type { PriceQuote } from "../assets/valuation";
 import { evaluateMandate, type MandateContext, type MandateDecision } from "../mandate/engine";
 import type { EconomicMandate } from "../mandate/schema";
 import { intentHash, validateIntent, type IntentTimingRules } from "../intent/compile";
-import type { EconomicIntent } from "../intent/schema";
+import { intentAssetId, type EconomicIntent } from "../intent/schema";
 
 export interface StoredIntent {
   readonly intent: EconomicIntent;
@@ -71,6 +74,14 @@ export interface RelayDependencies {
   readonly loadBuyerPolicy: (
     agentId: string,
   ) => Promise<{ mandate: EconomicMandate | null; context: MandateContext } | null>;
+  /**
+   * A live price for an asset with no registered USD peg.
+   *
+   * Absent — or returning null — means the relay cannot value such an intent,
+   * and the mandate check denies it. That is the intended behaviour: an
+   * unvaluable spend is an uncheckable spend.
+   */
+  readonly loadPriceQuote?: (assetId: string) => Promise<PriceQuote | null>;
   readonly timing?: IntentTimingRules;
   readonly now?: () => Date;
 }
@@ -184,18 +195,37 @@ export class IntentRelay {
         }),
       );
     } else {
-      mandateDecision = evaluateMandate(
-        policy.mandate,
-        {
-          amount: intent.maxSpend,
-          asset: intent.settlementAsset,
-          network: intent.network,
-          counterpartyVerified: provider?.verified ?? false,
-        },
-        policy.context,
-      );
-      if (mandateDecision.decision !== "ALLOW") {
-        violations.push(...mandateDecision.violations);
+      // The intent's maxSpend is an atomic quantity of its settlement asset,
+      // not a dollar figure. It is reconstituted as an asset amount so the
+      // mandate engine values it properly — treating it as dollars here is how
+      // 5 USDC becomes "half a cent".
+      const assetId = intentAssetId(intent);
+      if (!assetDefinition(assetId)) {
+        violations.push(
+          violation(
+            "UNKNOWN_ASSET",
+            `intent settles in ${assetId}, which is not a registered asset`,
+            { assetId },
+          ),
+        );
+      } else {
+        const amount = amountFromAtomic(intent.maxSpend, assetId);
+        const quote = this.deps.loadPriceQuote
+          ? await this.deps.loadPriceQuote(assetId)
+          : null;
+
+        mandateDecision = evaluateMandate(
+          policy.mandate,
+          {
+            amount,
+            ...(quote ? { quote } : {}),
+            counterpartyVerified: provider?.verified ?? false,
+          },
+          { ...policy.context, now },
+        );
+        if (mandateDecision.decision !== "ALLOW") {
+          violations.push(...mandateDecision.violations);
+        }
       }
     }
 

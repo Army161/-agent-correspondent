@@ -31,8 +31,26 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 
-/** Nanodollar column: an exact integer, stored as numeric to survive any driver. */
+/**
+ * Nanodollar column: an exact integer, stored as numeric to survive any driver.
+ *
+ * Used only where a value genuinely *is* US dollars — mandate limits, and USD
+ * valuations of asset-native amounts. It is never used to hold a quantity of a
+ * non-USD asset.
+ */
 const nanos = (name: string) => numeric(name, { precision: 38, scale: 0 });
+
+/**
+ * Atomic-unit column: an integer count of an asset's smallest unit.
+ *
+ * 78 digits because a uint256 needs 78. Always written alongside its asset id
+ * and decimal scale — an atomic quantity without its scale is meaningless, and
+ * a quantity without its asset is how one XRP becomes one dollar.
+ */
+const atomic = (name: string) => numeric(name, { precision: 78, scale: 0 });
+
+/** Canonical asset id, e.g. `ARC:USDC` or `XRPL:RLUSD:rIssuer...`. */
+const assetId = (name: string) => varchar(name, { length: 128 });
 
 const id = (name = "id") => varchar(name, { length: 128 });
 
@@ -170,8 +188,12 @@ export const agentCapabilities = pgTable(
       .references(() => agents.id, { onDelete: "cascade" }),
     capabilityId: varchar("capability_id", { length: 128 }).notNull(),
     category: varchar("category", { length: 64 }).notNull(),
-    /** Price per unit in nanodollars. */
+    /** @deprecated USD nanodollars. Superseded by the asset-native columns below. */
     priceNanos: nanos("price_nanos").notNull(),
+    /** Price per unit, in the asset it is actually quoted in. */
+    priceAtomic: atomic("price_atomic"),
+    priceAssetId: assetId("price_asset_id"),
+    priceDecimals: integer("price_decimals"),
     unit: varchar("unit", { length: 32 }).notNull().default("call"),
     latencyMs: integer("latency_ms").notNull().default(0),
     validationSupported: boolean("validation_supported").notNull().default(false),
@@ -245,9 +267,19 @@ export const economicIntents = pgTable(
     providerAgentId: id("provider_agent_id").notNull(),
     service: text("service").notNull(),
     serviceHash: varchar("service_hash", { length: 66 }).notNull(),
+    /** @deprecated USD nanodollars. Superseded by the atomic columns below. */
     maxSpendNanos: nanos("max_spend_nanos").notNull(),
     minReceiveNanos: nanos("min_receive_nanos").notNull(),
     maxNetworkFeeNanos: nanos("max_network_fee_nanos").notNull(),
+    /**
+     * Authorized amounts in atomic units of `settlementAssetId`. These are the
+     * numbers that were signed and the numbers a rail moves.
+     */
+    maxSpendAtomic: atomic("max_spend_atomic"),
+    minReceiveAtomic: atomic("min_receive_atomic"),
+    maxNetworkFeeAtomic: atomic("max_network_fee_atomic"),
+    settlementAssetId: assetId("settlement_asset_id"),
+    settlementAssetDecimals: integer("settlement_asset_decimals"),
     settlementAsset: varchar("settlement_asset", { length: 16 }).notNull(),
     allowedRails: jsonb("allowed_rails").$type<string[]>().notNull(),
     maxFxSlippageBps: integer("max_fx_slippage_bps").notNull().default(0),
@@ -320,8 +352,13 @@ export const quotes = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     providerAgentId: id("provider_agent_id").notNull(),
     capabilityId: varchar("capability_id", { length: 128 }).notNull(),
+    /** @deprecated USD nanodollars. Superseded by the asset-native columns. */
     priceNanos: nanos("price_nanos").notNull(),
     effectiveCostNanos: nanos("effective_cost_nanos").notNull(),
+    priceAtomic: atomic("price_atomic"),
+    priceAssetId: assetId("price_asset_id"),
+    priceDecimals: integer("price_decimals"),
+    settlementAssetId: assetId("settlement_asset_id"),
     settlementAsset: varchar("settlement_asset", { length: 16 }).notNull(),
     latencyMs: integer("latency_ms").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
@@ -398,8 +435,25 @@ export const transactions = pgTable(
     agentId: id("agent_id").references(() => agents.id, { onDelete: "set null" }),
     intentId: id("intent_id").references(() => economicIntents.id, { onDelete: "set null" }),
     direction: varchar("direction", { length: 8 }).notNull(),
+    /** @deprecated USD nanodollars. Superseded by the asset-native columns. */
     amountNanos: nanos("amount_nanos").notNull(),
     feeNanos: nanos("fee_nanos").notNull().default("0"),
+    /**
+     * The amount and the fee, each in its own asset's atomic units. Written out
+     * rather than generated: a helper spread here once produced two column sets
+     * under the same JavaScript keys, and the second silently replaced the
+     * first.
+     */
+    amountAtomic: atomic("amount_atomic"),
+    amountAssetId: assetId("amount_asset_id"),
+    amountDecimals: integer("amount_decimals"),
+    feeAtomic: atomic("fee_atomic"),
+    feeAssetId: assetId("fee_asset_id"),
+    feeDecimals: integer("fee_decimals"),
+    /** USD valuation of `amount`, with provenance. Null when it could not be valued. */
+    amountUsdNanos: nanos("amount_usd_nanos"),
+    amountUsdSource: varchar("amount_usd_source", { length: 128 }),
+    amountUsdAsOf: timestamp("amount_usd_as_of", { withTimezone: true, mode: "date" }),
     asset: varchar("asset", { length: 16 }).notNull(),
     network: varchar("network", { length: 32 }).notNull(),
     rail: varchar("rail", { length: 48 }).notNull(),
@@ -426,7 +480,11 @@ export const settlements = pgTable(
     intentId: id("intent_id").references(() => economicIntents.id, { onDelete: "set null" }),
     fromAgentId: id("from_agent_id").notNull(),
     toAgentId: id("to_agent_id").notNull(),
+    /** @deprecated USD nanodollars. Superseded by the asset-native columns. */
     amountNanos: nanos("amount_nanos").notNull(),
+    amountAtomic: atomic("amount_atomic"),
+    amountAssetId: assetId("amount_asset_id"),
+    amountDecimals: integer("amount_decimals"),
     asset: varchar("asset", { length: 16 }).notNull(),
     network: varchar("network", { length: 32 }).notNull(),
     rail: varchar("rail", { length: 48 }).notNull(),
@@ -450,7 +508,17 @@ export const muledgerEntries = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     debtorAgentId: id("debtor_agent_id").notNull(),
     creditorAgentId: id("creditor_agent_id").notNull(),
+    /** @deprecated Superseded by the asset-native columns; identical for μLedger assets. */
     amountNanos: nanos("amount_nanos").notNull(),
+    /**
+     * The obligation, in atomic units of a μLedger accounting asset. μLedger
+     * assets carry nanodollar precision deliberately: a 40-nanodollar
+     * obligation is 0.04 of a single USDC unit and is not representable on the
+     * rail until many of them have been netted together.
+     */
+    amountAtomic: atomic("amount_atomic"),
+    amountAssetId: assetId("amount_asset_id"),
+    amountDecimals: integer("amount_decimals"),
     asset: varchar("asset", { length: 16 }).notNull(),
     service: text("service").notNull(),
     intentId: id("intent_id"),
@@ -477,9 +545,14 @@ export const clearingCycles = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     asset: varchar("asset", { length: 16 }).notNull(),
+    assetId: assetId("asset_id"),
+    assetDecimals: integer("asset_decimals"),
     mode: varchar("mode", { length: 24 }).notNull(),
+    /** @deprecated Superseded by the atomic columns. */
     grossTotalNanos: nanos("gross_total_nanos").notNull(),
     netTotalNanos: nanos("net_total_nanos").notNull(),
+    grossTotalAtomic: atomic("gross_total_atomic"),
+    netTotalAtomic: atomic("net_total_atomic"),
     entryCount: integer("entry_count").notNull(),
     instructionCount: integer("instruction_count").notNull(),
     /** Canonical hash over inputs and outputs; makes the cycle reproducible. */
@@ -505,8 +578,19 @@ export const economicReceipts = pgTable(
     intentId: id("intent_id"),
     jobId: id("job_id"),
     service: text("service").notNull(),
+    /** @deprecated USD nanodollars. Superseded by the asset-native columns. */
     quotedPriceNanos: nanos("quoted_price_nanos").notNull(),
     finalPriceNanos: nanos("final_price_nanos").notNull(),
+    quotedPriceAtomic: atomic("quoted_price_atomic"),
+    quotedPriceAssetId: assetId("quoted_price_asset_id"),
+    quotedPriceDecimals: integer("quoted_price_decimals"),
+    finalPriceAtomic: atomic("final_price_atomic"),
+    finalPriceAssetId: assetId("final_price_asset_id"),
+    finalPriceDecimals: integer("final_price_decimals"),
+    /** USD valuation of the final price, with provenance. */
+    finalPriceUsdNanos: nanos("final_price_usd_nanos"),
+    finalPriceUsdSource: varchar("final_price_usd_source", { length: 128 }),
+    finalPriceUsdAsOf: timestamp("final_price_usd_as_of", { withTimezone: true, mode: "date" }),
     network: varchar("network", { length: 32 }).notNull(),
     settlementRail: varchar("settlement_rail", { length: 48 }).notNull(),
     settlementAsset: varchar("settlement_asset", { length: 16 }).notNull(),
@@ -540,7 +624,10 @@ export const reputationEvents = pgTable(
     agentId: id("agent_id").notNull(),
     counterpartyAgentId: id("counterparty_agent_id").notNull(),
     kind: varchar("kind", { length: 48 }).notNull(),
+    /** Settled value in USD nanodollars, with the provenance of that valuation. */
     valueNanos: nanos("value_nanos").notNull().default("0"),
+    valueUsdSource: varchar("value_usd_source", { length: 128 }),
+    valueUsdAsOf: timestamp("value_usd_as_of", { withTimezone: true, mode: "date" }),
     receiptId: id("receipt_id"),
     occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull(),
     createdAt: createdAt(),

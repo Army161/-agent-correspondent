@@ -277,8 +277,12 @@ test.describe("with a database", () => {
 
     expect(body.intentId).toMatch(/^intent_[0-9a-f]{32}$/);
     expect(body.digest).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(body.display.maxSpend).toBe("$0.025");
-    // $0.025 of 6-decimal USDC is 25000 base units — the §23 parity property.
+    // Rendered in the settlement asset, not as dollars: 0.025 USDC is a
+    // quantity of USDC, which happens to be USD-par but is not itself a dollar
+    // figure.
+    expect(body.display.maxSpend).toBe("0.025 USDC");
+    expect(body.display.settlementAssetId).toBe("ARC:USDC");
+    // 0.025 USDC is 25000 base units — the deterministic-parity property.
     expect(body.typedData.message.maxSpend).toBe("25000");
     expect(body.typedData.message.minReceive).toBe("20000");
     expect(body.typedData.domain.chainId).toBe(5042);

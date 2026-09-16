@@ -14,8 +14,9 @@
  */
 
 import { fail, ok, violation, type Outcome } from "../errors/index";
-import { nanosToBaseUnits } from "../units/money";
+import { assetDefinition } from "../assets/registry";
 import type { EconomicIntent } from "./schema";
+import { intentAssetId } from "./schema";
 
 export type Keccak256 = (bytes: Uint8Array) => Uint8Array;
 
@@ -164,31 +165,30 @@ export function canonicalRails(rails: readonly string[]): string {
 /**
  * Build the typed-data message, ready to hand to a wallet or to viem.
  *
- * Two conversions happen here, and both are deliberate:
+ * Free-form identifiers (agent ids, asset symbol, evaluator, destination,
+ * network, rail list) are `keccak256`-hashed into `bytes32`. Truncating them
+ * into 32 bytes instead would let `agent_184a` and `agent_184b` collide.
  *
- *  - Free-form identifiers (agent ids, asset symbol, evaluator, destination,
- *    network, rail list) are `keccak256`-hashed into `bytes32`. Truncating them
- *    into 32 bytes instead would let `agent_184a` and `agent_184b` collide.
- *  - `maxSpend`, `minReceive` and `maxNetworkFee` are converted from nanos into
- *    the settlement asset's own base units, because that is the number a
- *    contract will move. The conversion is `exact`: if the authorized amount
- *    cannot be expressed on the target rail, compilation fails rather than
- *    rounding the user's money in either direction.
+ * Amounts need no conversion: an intent already carries them as atomic units of
+ * its settlement asset, which is exactly what a contract moves. The scale is
+ * still validated against the asset registry, so an intent whose declared asset
+ * is unknown cannot be signed — an unknown scale means an unknown amount.
  */
 export function buildIntentTypedData(
   intent: EconomicIntent,
   keccak256: Keccak256,
 ): Outcome<TypedDataMessage> {
-  const maxSpend = nanosToBaseUnits(intent.maxSpend, intent.network, intent.settlementAsset);
-  if (!maxSpend.ok) return maxSpend as Outcome<TypedDataMessage>;
-  const minReceive = nanosToBaseUnits(intent.minReceive, intent.network, intent.settlementAsset);
-  if (!minReceive.ok) return minReceive as Outcome<TypedDataMessage>;
-  const maxNetworkFee = nanosToBaseUnits(
-    intent.maxNetworkFee,
-    intent.network,
-    intent.settlementAsset,
-  );
-  if (!maxNetworkFee.ok) return maxNetworkFee as Outcome<TypedDataMessage>;
+  const assetId = intentAssetId(intent);
+  const definition = assetDefinition(assetId);
+  if (!definition) {
+    return fail(
+      violation(
+        "UNKNOWN_ASSET",
+        `intent settles in ${assetId}, which is not a registered asset; its atomic scale is unknown so it cannot be signed`,
+        { assetId },
+      ),
+    );
+  }
 
   if (intent.chainId <= 0) {
     return fail(violation("CHAIN_MISMATCH", "intent must be bound to a chain id"));
@@ -211,12 +211,12 @@ export function buildIntentTypedData(
       buyerAgentId: tag(intent.buyerAgentId),
       providerAgentId: tag(intent.providerAgentId),
       serviceHash: intent.serviceHash,
-      maxSpend: maxSpend.value,
-      minReceive: minReceive.value,
+      maxSpend: intent.maxSpend,
+      minReceive: intent.minReceive,
       settlementAsset: tag(intent.settlementAsset),
       allowedRails: tag(canonicalRails(intent.allowedRails)),
       maxFxSlippageBps: intent.maxFxSlippageBps,
-      maxNetworkFee: maxNetworkFee.value,
+      maxNetworkFee: intent.maxNetworkFee,
       evaluator: tag(intent.evaluator),
       destination: tag(intent.destination),
       network: tag(intent.network),

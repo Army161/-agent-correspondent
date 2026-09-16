@@ -96,13 +96,24 @@ consulted again.
 
 ## Data and money representation
 
-All money is an integer count of **nanodollars** (`bigint`, 1 USD = 1e9). Floats
-never touch an amount. In Postgres, money is `numeric(38, 0)` holding the
-nanodollar integer as a string; `fromNanosColumn` / `toNanosColumn` are the only
-places that conversion happens.
+Two types, kept separate on purpose — see [MONEY_MODEL.md](./MONEY_MODEL.md).
 
-Conversion to a rail's own base units is explicit and, by default, **exact**: if
-an authorized amount cannot be represented in USDC's six decimals, compilation
+**`AssetAmount`** is a quantity of one asset: an integer of that asset's
+smallest unit, carrying its own symbol, network, scale and issuer. One XRP is
+1,000,000 drops. Floats never touch it.
+
+**`UsdValue`** is an opinion about an `AssetAmount` at a point in time, from a
+named source. It exists only when a registered peg policy or a live price says
+so. There is no path from a quantity to a dollar figure that does not go through
+one of those two, which is what stops one XRP from being recorded as one dollar.
+
+USD limits — mandates, reporting — remain integer **nanodollars** (1 USD = 1e9).
+In Postgres an amount is stored as `(atomic, asset_id, decimals)` and a
+valuation as `(usd_nanos, usd_source, usd_as_of)`; database triggers reject an
+insert missing either triple.
+
+Conversion between scales is explicit and, by default, **exact**: if an
+authorized amount cannot be represented in USDC's six decimals, compilation
 fails rather than rounding the user's money in either direction.
 
 ## Determinism

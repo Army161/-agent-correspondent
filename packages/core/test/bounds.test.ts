@@ -11,7 +11,12 @@ import { describe, expect, it } from "vitest";
 import { enforceBounds, type ExecutionPlan } from "../src/bounds/index";
 import { compileIntent, type CompileIntentRequest } from "../src/intent/compile";
 import { unwrap } from "../src/errors/index";
-import { usd } from "../src/units/money";
+
+/** USDC atomic units (6 decimals) — the units this intent is authorized in. */
+const usdc = (value: string): bigint => {
+  const [whole = "0", fraction = ""] = value.split(".");
+  return BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0").slice(0, 6) || "0");
+};
 
 const NOW = new Date("2026-03-01T12:00:00.000Z");
 
@@ -37,15 +42,15 @@ const request: CompileIntentRequest = {
 const intent = unwrap(compileIntent(request, NOW));
 
 const honestPlan: ExecutionPlan = {
-  totalSpend: usd("0.023"),
-  providerReceives: usd("0.021"),
-  railFee: usd("0.001"),
-  networkFee: usd("0.001"),
+  totalSpend: usdc("0.023"),
+  providerReceives: usdc("0.021"),
+  railFee: usdc("0.001"),
+  networkFee: usdc("0.001"),
   asset: "USDC",
   network: "ARC",
   destination: "0x00000000000000000000000000000000000000c1",
   rail: "X402",
-  quotedReceive: usd("0.021"),
+  quotedReceive: usdc("0.021"),
   quotedAt: NOW,
 };
 
@@ -63,31 +68,31 @@ describe("bounds — the authorized path executes", () => {
   it("authorizes a plan that lands exactly on every ceiling", () => {
     const exact: ExecutionPlan = {
       ...honestPlan,
-      totalSpend: usd("0.025"),
-      providerReceives: usd("0.02"),
-      railFee: usd("0.003"),
-      networkFee: usd("0.002"),
-      quotedReceive: usd("0.02"),
+      totalSpend: usdc("0.025"),
+      providerReceives: usdc("0.02"),
+      railFee: usdc("0.003"),
+      networkFee: usdc("0.002"),
+      quotedReceive: usdc("0.02"),
     };
     expect(enforceBounds(intent, exact, NOW).authorized).toBe(true);
   });
 });
 
 describe("ATTACK: amount mutation", () => {
-  it("blocks spending one nanodollar more than authorized", () => {
+  it("blocks spending one atomic unit more than authorized", () => {
     expect(
       codes({
         ...honestPlan,
-        totalSpend: usd("0.025") + 1n,
-        providerReceives: usd("0.021") + 1n,
-        quotedReceive: usd("0.021") + 1n,
+        totalSpend: usdc("0.025") + 1n,
+        providerReceives: usdc("0.021") + 1n,
+        quotedReceive: usdc("0.021") + 1n,
       }),
     ).toContain("MAX_SPEND_EXCEEDED");
   });
 
-  it("blocks the $1-authorized / $10-executed mutation outright", () => {
+  it("blocks the 0.025-authorized / 10-executed mutation outright", () => {
     expect(
-      codes({ ...honestPlan, totalSpend: usd("10"), providerReceives: usd("9.998") }),
+      codes({ ...honestPlan, totalSpend: usdc("10"), providerReceives: usdc("9.998") }),
     ).toContain("MAX_SPEND_EXCEEDED");
   });
 
@@ -95,10 +100,10 @@ describe("ATTACK: amount mutation", () => {
     expect(
       codes({
         ...honestPlan,
-        providerReceives: usd("0.019"),
-        railFee: usd("0.003"),
-        totalSpend: usd("0.023"),
-        quotedReceive: usd("0.019"),
+        providerReceives: usdc("0.019"),
+        railFee: usdc("0.003"),
+        totalSpend: usdc("0.023"),
+        quotedReceive: usdc("0.019"),
       }),
     ).toContain("MIN_RECEIVE_NOT_MET");
   });
@@ -106,7 +111,7 @@ describe("ATTACK: amount mutation", () => {
   it("blocks a plan whose components do not reconcile to its total", () => {
     // Skimming: the buyer is charged the authorized total, but the parts do not
     // add up, so someone is taking a cut that is not declared.
-    expect(codes({ ...honestPlan, railFee: usd("0.005") })).toContain("MAX_FEE_EXCEEDED");
+    expect(codes({ ...honestPlan, railFee: usdc("0.005") })).toContain("MAX_FEE_EXCEEDED");
   });
 });
 
@@ -115,10 +120,10 @@ describe("ATTACK: fee inflation", () => {
     expect(
       codes({
         ...honestPlan,
-        networkFee: usd("0.003"),
+        networkFee: usdc("0.003"),
         railFee: 0n,
-        totalSpend: usd("0.024"),
-        providerReceives: usd("0.021"),
+        totalSpend: usdc("0.024"),
+        providerReceives: usdc("0.021"),
       }),
     ).toContain("MAX_NETWORK_FEE_EXCEEDED");
   });
@@ -127,6 +132,11 @@ describe("ATTACK: fee inflation", () => {
 describe("ATTACK: substitution", () => {
   it("blocks paying in a different asset", () => {
     expect(codes({ ...honestPlan, asset: "RLUSD" })).toContain("ASSET_SUBSTITUTION");
+  });
+
+  it("blocks an asset that matches on symbol and network but resolves elsewhere", () => {
+    // ARC_TESTNET:USDC shares the symbol but is a different asset entirely.
+    expect(codes({ ...honestPlan, network: "ARC_TESTNET" })).toContain("ASSET_SUBSTITUTION");
   });
 
   it("blocks settling on a different network", () => {
@@ -178,27 +188,27 @@ describe("ATTACK: timing", () => {
 
 describe("ATTACK: FX slippage", () => {
   it("blocks a received amount that drifted beyond the authorized slippage", () => {
-    // Quoted $0.021, delivering $0.0205 is ~238 bps of drift against a 25 bps
-    // authorization.
+    // Quoted 0.021 USDC, delivering 0.0205 is ~238 bps of drift against a
+    // 25 bps authorization.
     expect(
       codes({
         ...honestPlan,
-        providerReceives: usd("0.0205"),
-        railFee: usd("0.0015"),
-        quotedReceive: usd("0.021"),
+        providerReceives: usdc("0.0205"),
+        railFee: usdc("0.0015"),
+        quotedReceive: usdc("0.021"),
       }),
     ).toContain("FX_SLIPPAGE_EXCEEDED");
   });
 
   it("permits drift inside the authorized slippage", () => {
-    // 20 bps of drift against a 25 bps authorization.
+    // 0.020958 of 0.021 is 20 bps of drift, inside the 25 bps authorization.
     const plan: ExecutionPlan = {
       ...honestPlan,
-      providerReceives: usd("0.0209580"),
-      railFee: usd("0.001042"),
-      networkFee: usd("0.001"),
-      totalSpend: usd("0.023"),
-      quotedReceive: usd("0.021"),
+      providerReceives: usdc("0.020958"),
+      railFee: usdc("0.001042"),
+      networkFee: usdc("0.001"),
+      totalSpend: usdc("0.023"),
+      quotedReceive: usdc("0.021"),
     };
     const result = enforceBounds(intent, plan, NOW);
     expect(result.violations.map((v) => v.code)).not.toContain("FX_SLIPPAGE_EXCEEDED");
@@ -209,8 +219,8 @@ describe("bounds reporting", () => {
   it("reports every violation at once rather than the first", () => {
     const hostile: ExecutionPlan = {
       ...honestPlan,
-      totalSpend: usd("10"),
-      providerReceives: usd("0.001"),
+      totalSpend: usdc("10"),
+      providerReceives: usdc("0.001"),
       asset: "XRP",
       network: "XRPL",
       destination: "0x0000000000000000000000000000000000000bad",

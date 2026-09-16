@@ -12,25 +12,35 @@
  */
 
 import { violation, type EconomicViolation } from "../errors/index";
-import { formatUsd, slippageBps, type Nanos } from "../units/money";
-import type { EconomicIntent } from "../intent/schema";
+import { slippageBps } from "../units/money";
+import { formatAtomic } from "../units/decimal";
+import { assetDefinition, canonicalAssetId } from "../assets/registry";
+import { intentAssetId, type EconomicIntent } from "../intent/schema";
 
-/** What the executor is actually about to do. */
+/**
+ * What the executor is actually about to do.
+ *
+ * Every amount is an integer of the settlement asset's **smallest unit** — the
+ * same units the intent authorized and the same units the rail moves. Nothing
+ * here is denominated in dollars, because a comparison between an authorization
+ * in one unit and an execution in another is exactly the class of bug this
+ * function exists to catch.
+ */
 export interface ExecutionPlan {
-  /** Total leaving the buyer, in nanos, fees included. */
-  readonly totalSpend: Nanos;
-  /** What the provider will receive, in nanos. */
-  readonly providerReceives: Nanos;
-  /** Rail/protocol fee, in nanos. */
-  readonly railFee: Nanos;
-  /** Network/gas fee, in nanos. */
-  readonly networkFee: Nanos;
+  /** Total leaving the buyer, in settlement-asset atomic units, fees included. */
+  readonly totalSpend: bigint;
+  /** What the provider will receive, in settlement-asset atomic units. */
+  readonly providerReceives: bigint;
+  /** Rail/protocol fee, in settlement-asset atomic units. */
+  readonly railFee: bigint;
+  /** Network/gas fee, in settlement-asset atomic units. */
+  readonly networkFee: bigint;
   readonly asset: string;
   readonly network: string;
   readonly destination: string;
   readonly rail: string;
   /** Expected received amount at quote time, for slippage measurement. */
-  readonly quotedReceive?: Nanos;
+  readonly quotedReceive?: bigint;
   /** When the quote backing this plan was produced. */
   readonly quotedAt?: Date;
 }
@@ -53,6 +63,15 @@ export function enforceBounds(
 ): BoundsResult {
   const violations: EconomicViolation[] = [];
   const nowSeconds = Math.floor(now.getTime() / 1000);
+
+  // Amounts are rendered at the settlement asset's own scale so a violation
+  // message says "0.025 USDC", not a bare integer of unclear units.
+  const authorizedAssetId = intentAssetId(intent);
+  const decimals = assetDefinition(authorizedAssetId)?.decimals;
+  const show = (atomic: bigint): string =>
+    decimals === undefined
+      ? `${atomic} atomic units`
+      : `${formatAtomic(atomic, decimals)} ${intent.settlementAsset}`;
 
   // --- the authorization must still be live -------------------------------
   if (nowSeconds > intent.expiresAt) {
@@ -89,6 +108,20 @@ export function enforceBounds(
       }),
     );
   }
+  // Symbol and network matching separately is not sufficient: two assets can
+  // share both and still differ by issuer or contract. The resolved identity is
+  // the check that catches a look-alike issuer.
+  const planAssetId = canonicalAssetId(plan.network, plan.asset);
+  if (planAssetId !== authorizedAssetId) {
+    violations.push(
+      violation(
+        "ASSET_SUBSTITUTION",
+        `execution resolves to asset ${planAssetId}, but the authorization is for ${authorizedAssetId}`,
+        { expected: authorizedAssetId, actual: planAssetId },
+      ),
+    );
+  }
+
   // Destination comparison is case-insensitive because EVM addresses are
   // checksummed inconsistently across tools; it is otherwise exact.
   if (plan.destination.toLowerCase() !== intent.destination.toLowerCase()) {
@@ -113,7 +146,7 @@ export function enforceBounds(
     violations.push(
       violation(
         "MAX_SPEND_EXCEEDED",
-        `execution would spend ${formatUsd(plan.totalSpend, { symbol: true })}, above the authorized ${formatUsd(intent.maxSpend, { symbol: true })}`,
+        `execution would spend ${show(plan.totalSpend)}, above the authorized ${show(intent.maxSpend)}`,
         { authorized: intent.maxSpend, planned: plan.totalSpend },
       ),
     );
@@ -122,7 +155,7 @@ export function enforceBounds(
     violations.push(
       violation(
         "MIN_RECEIVE_NOT_MET",
-        `provider would receive ${formatUsd(plan.providerReceives, { symbol: true })}, below the required ${formatUsd(intent.minReceive, { symbol: true })}`,
+        `provider would receive ${show(plan.providerReceives)}, below the required ${show(intent.minReceive)}`,
         { required: intent.minReceive, planned: plan.providerReceives },
       ),
     );
@@ -131,7 +164,7 @@ export function enforceBounds(
     violations.push(
       violation(
         "MAX_NETWORK_FEE_EXCEEDED",
-        `network fee ${formatUsd(plan.networkFee, { symbol: true })} exceeds the authorized ${formatUsd(intent.maxNetworkFee, { symbol: true })}`,
+        `network fee ${show(plan.networkFee)} exceeds the authorized ${show(intent.maxNetworkFee)}`,
         { authorized: intent.maxNetworkFee, planned: plan.networkFee },
       ),
     );
@@ -144,7 +177,7 @@ export function enforceBounds(
     violations.push(
       violation(
         "MAX_FEE_EXCEEDED",
-        `execution plan does not reconcile: ${formatUsd(plan.providerReceives)} + ${formatUsd(plan.railFee)} + ${formatUsd(plan.networkFee)} != ${formatUsd(plan.totalSpend)}`,
+        `execution plan does not reconcile: ${show(plan.providerReceives)} + ${show(plan.railFee)} + ${show(plan.networkFee)} != ${show(plan.totalSpend)}`,
         { reconciled, totalSpend: plan.totalSpend },
       ),
     );

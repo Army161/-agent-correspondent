@@ -18,13 +18,14 @@
  */
 
 import type {
+  AssetAmount,
   CapabilityId,
   EconomicIntent,
   EconomicViolation,
   ExecutionPlan,
-  Nanos,
   Outcome,
   ProtocolCapabilityEngine,
+  UsdValue,
 } from "@acor/core";
 
 export type AdapterStatus = "NOT_CONFIGURED" | "READY" | "DEGRADED" | "ERROR";
@@ -39,12 +40,20 @@ export interface AdapterHealth {
   readonly checkedAt: Date;
 }
 
+/**
+ * A balance, in the asset's own units.
+ *
+ * `amount` is an `AssetAmount`, never a dollar figure. A wallet holding 12 XRP
+ * holds twelve XRP; what that is worth in dollars is a separate question with a
+ * separate answer that may not exist. `usdValue` is populated only when the
+ * asset has a registered peg or the caller supplied a price, and is `null`
+ * otherwise — which the UI renders as an unknown, not as zero.
+ */
 export interface BalanceReading {
-  readonly asset: string;
-  readonly network: string;
+  readonly amount: AssetAmount;
   readonly address: string;
-  readonly amount: Nanos;
   readonly asOf: Date;
+  readonly usdValue: UsdValue | null;
 }
 
 export interface SettlementRequest {
@@ -57,8 +66,10 @@ export interface SettlementRequest {
 export interface SettlementResult {
   readonly reference: string;
   readonly status: "SUBMITTED" | "CONFIRMED";
-  readonly settledAmount: Nanos;
-  readonly feePaid: Nanos;
+  /** What actually moved, in the settlement asset's own units. */
+  readonly settledAmount: AssetAmount;
+  /** What the rail charged, in the asset the fee was charged in. */
+  readonly feePaid: AssetAmount;
   readonly submittedAt: Date;
 }
 
@@ -67,7 +78,10 @@ export interface SettlementAdapter {
   readonly networks: readonly string[];
   /** Report configuration and probe live capabilities. Never throws. */
   health(capabilities: ProtocolCapabilityEngine): Promise<AdapterHealth>;
-  /** Read balances. Returns a violation when not configured — never a zero. */
+  /**
+   * Read balances. Returns a violation when not configured — never a zero.
+   * `assets` are canonical asset ids; an adapter ignores ones it cannot serve.
+   */
   balances(address: string, assets: readonly string[]): Promise<Outcome<readonly BalanceReading[]>>;
   /** Execute a settlement that has already passed the mandate and bounds checks. */
   settle(request: SettlementRequest): Promise<Outcome<SettlementResult>>;

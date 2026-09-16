@@ -15,6 +15,27 @@
       "when": 1789563594355,
       "tag": "0001_append_only",
       "breakpoints": false
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789583382021,
+      "tag": "0002_asset_native_amounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789583382022,
+      "tag": "0003_backfill_asset_amounts",
+      "breakpoints": false
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789583382023,
+      "tag": "0004_require_asset_identity",
+      "breakpoints": false
     }
   ]
 }

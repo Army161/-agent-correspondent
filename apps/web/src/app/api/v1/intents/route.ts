@@ -11,12 +11,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { keccak256 } from "@acor/adapters";
-import { getDb, economicIntents, toNanosColumn } from "@acor/db";
+import { getDb, economicIntents } from "@acor/db";
 import {
+  assetDefinition,
   buildIntentTypedData,
   compileIntent,
   describeIntent,
   hashIntent,
+  intentAssetId,
   intentHash,
 } from "@acor/core";
 
@@ -130,9 +132,18 @@ export async function POST(request: Request): Promise<NextResponse> {
         providerAgentId: intent.providerAgentId,
         service: intent.service,
         serviceHash: intent.serviceHash,
-        maxSpendNanos: toNanosColumn(intent.maxSpend),
-        minReceiveNanos: toNanosColumn(intent.minReceive),
-        maxNetworkFeeNanos: toNanosColumn(intent.maxNetworkFee),
+        // The legacy USD columns are retained for rows written before the
+        // asset-native migration. They are no longer the source of truth and
+        // are written as zero rather than as a dollar figure this intent does
+        // not have: an XRP intent has no dollar amount until it is valued.
+        maxSpendNanos: "0",
+        minReceiveNanos: "0",
+        maxNetworkFeeNanos: "0",
+        maxSpendAtomic: intent.maxSpend.toString(10),
+        minReceiveAtomic: intent.minReceive.toString(10),
+        maxNetworkFeeAtomic: intent.maxNetworkFee.toString(10),
+        settlementAssetId: intentAssetId(intent),
+        settlementAssetDecimals: assetDefinition(intentAssetId(intent))?.decimals ?? null,
         settlementAsset: intent.settlementAsset,
         allowedRails: [...intent.allowedRails],
         maxFxSlippageBps: intent.maxFxSlippageBps,

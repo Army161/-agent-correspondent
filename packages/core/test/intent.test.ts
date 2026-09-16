@@ -91,7 +91,10 @@ describe("intent compilation", () => {
   it("compiles a valid intent with a content-derived id", () => {
     const intent = unwrap(compileIntent({ ...request, nonce: `0x${"11".repeat(32)}` }, NOW));
     expect(intent.intentId).toMatch(/^intent_[0-9a-f]{32}$/);
-    expect(intent.maxSpend).toBe(usd("0.025"));
+    // Amounts are atomic units of the *settlement asset*, not dollars.
+    // "0.025" USDC is 25000 of USDC's smallest unit.
+    expect(intent.maxSpend).toBe(25_000n);
+    expect(intent.minReceive).toBe(20_000n);
     expect(intent.createdAt).toBe(Math.floor(NOW.getTime() / 1000));
     expect(intent.expiresAt).toBe(intent.createdAt + 300);
 
@@ -162,8 +165,10 @@ describe("intent compilation", () => {
   it("renders a display projection that matches the signed values", () => {
     const intent = unwrap(compileIntent(request, NOW));
     const described = describeIntent(intent);
-    expect(described.maxSpend).toBe("$0.025");
-    expect(described.minReceive).toBe("$0.02");
+    // Rendered in the asset, with its symbol — never as though it were dollars.
+    expect(described.maxSpend).toBe("0.025 USDC");
+    expect(described.minReceive).toBe("0.02 USDC");
+    expect(described.settlementAssetId).toBe("ARC:USDC");
     expect(described.hash).toBe(intentHash(intent));
   });
 });
@@ -196,10 +201,18 @@ describe("deterministic parity: our EIP-712 encoder vs viem", () => {
 
   it("carries amounts in the settlement asset's own base units", () => {
     const typed = unwrap(buildIntentTypedData(intent, keccak256));
-    // $0.025 of 6-decimal USDC is 25000 base units — not 25_000_000 nanos, and
-    // not 0.025 of anything.
+    // 0.025 USDC is 25000 base units — the number a contract actually moves.
     expect(typed.message.maxSpend).toBe(25_000n);
     expect(typed.message.minReceive).toBe(20_000n);
+  });
+
+  it("ATTACK: an intent in an unregistered asset cannot be signed at all", () => {
+    // Without a registered asset there is no known scale, so "25000" could mean
+    // any quantity. Refusing is the only safe answer.
+    const unknown = { ...intent, settlementAsset: "USDC" as const, network: "XRPL" as const };
+    const result = buildIntentTypedData(unknown, keccak256);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.violations[0]?.code).toBe("UNKNOWN_ASSET");
   });
 
   it("ATTACK: changing the chain id changes the digest (cross-chain replay)", () => {
@@ -215,14 +228,13 @@ describe("deterministic parity: our EIP-712 encoder vs viem", () => {
   it("ATTACK: changing any economic field changes the digest", () => {
     const base = unwrap(hashIntent(intent, keccak256));
     const mutations = [
-      // One USDC base unit is 1_000 nanos; smaller steps are not expressible
-      // on this rail at all and are rejected before hashing.
-      { maxSpend: intent.maxSpend + 1_000n },
-      { minReceive: intent.minReceive - 1_000n },
-      { maxNetworkFee: intent.maxNetworkFee + 1_000n },
+      // A single atomic unit — the smallest change the rail can express.
+      { maxSpend: intent.maxSpend + 1n },
+      { minReceive: intent.minReceive - 1n },
+      { maxNetworkFee: intent.maxNetworkFee + 1n },
       { destination: "0x00000000000000000000000000000000000000c2" },
       { settlementAsset: "RLUSD" as const },
-      { network: "XRPL" as const },
+      { network: "ARC_TESTNET" as const },
       { nonce: `0x${"cd".repeat(32)}` },
       { deadline: intent.deadline - 1 },
       { expiresAt: intent.expiresAt + 1 },
@@ -251,11 +263,28 @@ describe("deterministic parity: our EIP-712 encoder vs viem", () => {
   });
 
   it("refuses to compile an authorization the rail cannot express exactly", () => {
-    // $0.0000005 cannot be represented in 6-decimal USDC.
-    const fine = { ...intent, maxSpend: 500n };
-    const result = buildIntentTypedData(fine, keccak256);
+    // 0.0000005 USDC is finer than USDC's six decimals. Compilation refuses
+    // rather than rounding the authorized amount in either direction.
+    const result = compileIntent({ ...request, maxSpend: "0.0000005" }, NOW);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.violations[0]?.code).toBe("PRECISION_LOSS");
+    if (!result.ok) {
+      expect(result.violations[0]?.code).toBe("PRECISION_LOSS");
+      expect(result.violations[0]?.message).toContain("maxSpend");
+    }
+  });
+
+  it("parses the same decimal differently for a different asset, as it must", () => {
+    // "1" of an 18-decimal token is 1e18 atomic units; "1" of 6-decimal USDC is
+    // 1e6. A single shared dollar scale would have conflated them.
+    const usdcIntent = unwrap(compileIntent({ ...request, maxSpend: "1", minReceive: "0" }, NOW));
+    const rlusdIntent = unwrap(
+      compileIntent(
+        { ...request, settlementAsset: "RLUSD", maxSpend: "1", minReceive: "0" },
+        NOW,
+      ),
+    );
+    expect(usdcIntent.maxSpend).toBe(10n ** 6n);
+    expect(rlusdIntent.maxSpend).toBe(10n ** 18n);
   });
 
   it("keeps the off-chain canonical hash stable across runs", () => {

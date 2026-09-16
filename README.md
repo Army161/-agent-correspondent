@@ -49,8 +49,10 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm e2e
 
 ## What is actually built
 
-- **Nanodollar money math** — integer `bigint`, 1 USD = 1e9. Floats never touch
-  an amount, and a $0.00000004 obligation survives the whole pipeline.
+- **Asset-native money** — a quantity of an asset is never a number of dollars.
+  One XRP is 1,000,000 drops; it becomes a dollar figure only via a registered
+  peg or a live price, and fails closed without one. Exact bigint arithmetic
+  throughout, and a $0.00000004 obligation survives the whole pipeline.
 - **Economic mandates** — deterministic per-agent spending policy, fail-closed
   on missing mandate, unknown balance or unknown spend history.
 - **Economic intents** — EIP-712 signable authorizations, with a parity test
@@ -73,6 +75,7 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm e2e
 
 [Product spec](docs/PRODUCT_SPEC.md) ·
 [Architecture](docs/ARCHITECTURE.md) ·
+[Money model](docs/MONEY_MODEL.md) ·
 [Economic intents](docs/ECONOMIC_INTENTS.md) ·
 [Economic mandates](docs/ECONOMIC_MANDATES.md) ·
 [μLedger](docs/MULEDGER.md) ·

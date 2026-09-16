@@ -6,7 +6,7 @@
  * are applied in one place.
  */
 
-import { formatUsd, type Nanos } from "@acor/core";
+import { formatAmount, formatUsd, type AssetAmount, type Nanos, type UsdValue } from "@acor/core";
 
 /** A value the platform does not have. Never rendered as `$0.00`. */
 export const AWAITING = "AWAITING DATA";
@@ -24,6 +24,45 @@ export const NOT_CONNECTED = "NOT CONNECTED";
 export function usdDisplay(nanos: Nanos | null | undefined, fallback = AWAITING): string {
   if (nanos === null || nanos === undefined) return fallback;
   return formatUsd(nanos, { symbol: true, grouped: true });
+}
+
+/**
+ * Render a quantity of an asset, in that asset.
+ *
+ * Never converts and never implies dollars: 12 XRP renders as `12 XRP`, because
+ * that is what it is. What it is worth is a separate question with a separate
+ * answer, rendered by `usdValueDisplay`.
+ */
+export function assetDisplay(amount: AssetAmount | null | undefined, fallback = AWAITING): string {
+  if (!amount) return fallback;
+  return formatAmount(amount, { grouped: true, minDecimals: 2 });
+}
+
+/**
+ * Render a USD valuation, or say that there isn't one.
+ *
+ * An asset with no registered peg and no live price has no dollar figure, and
+ * the honest rendering of that is a dash with an explanation — not `$0.00`,
+ * which would read as "this is worth nothing".
+ */
+export function usdValueDisplay(value: UsdValue | null | undefined): string {
+  if (!value) return NO_VALUATION;
+  return formatUsd(value.nanos, { symbol: true, grouped: true });
+}
+
+/** Shown where a USD figure would go when the asset cannot be valued. */
+export const NO_VALUATION = "NO PRICE";
+
+export function valuationSourceLabel(value: UsdValue | null | undefined): string | null {
+  if (!value) return null;
+  switch (value.source.kind) {
+    case "PEG":
+      return `peg · ${value.source.authority}`;
+    case "ORACLE":
+      return `price · ${value.source.name}`;
+    case "MANUAL":
+      return `manual · ${value.source.note}`;
+  }
 }
 
 export function scoreDisplay(score: number | null | undefined): string {

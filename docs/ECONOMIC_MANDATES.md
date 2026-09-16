@@ -24,9 +24,14 @@ rail.
 }
 ```
 
-Amounts are decimal strings or numbers on the wire and exact nanodollar
-integers everywhere inside the system. Both allowlists must be non-empty: a
-mandate has to be explicit about what it permits.
+Limits are decimal strings or numbers on the wire and exact nanodollar integers
+inside the system. Both allowlists must be non-empty: a mandate has to be
+explicit about what it permits.
+
+Mandate limits are **dollar figures**, because that is how an operator reasons
+about them. A spend arrives denominated in an asset, so it must be valued before
+it can be tested — and a spend that cannot be valued cannot be checked, so it is
+denied. See [MONEY_MODEL.md](./MONEY_MODEL.md).
 
 ## Rules, in evaluation order
 
@@ -53,13 +58,16 @@ not raise a $5 per-transaction ceiling.
 
 ## Fail-closed
 
-Three conditions are denials rather than defaults:
+Four conditions are denials rather than defaults:
 
 - **No mandate.** An agent without a mandate cannot spend anything.
 - **Unknown balance.** `availableBalance: null` denies, rather than assuming
   funds exist.
 - **Unknown spend history.** `spentToday: null` denies, rather than assuming
   zero.
+- **Unvaluable amount.** An asset with no registered peg and no fresh price
+  cannot be compared to a dollar limit, so it is denied — never valued at zero
+  and never assumed to be a dollar.
 
 This matters in practice. A rail outage that makes balances unreadable must not
 become a window in which the daily limit is unenforceable.

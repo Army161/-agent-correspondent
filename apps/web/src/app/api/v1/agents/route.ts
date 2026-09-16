@@ -16,7 +16,13 @@ import {
   getDb,
   toNanosColumn,
 } from "@acor/db";
-import { DEFAULT_MANDATE, economicMandateSchema, newId, parseUsd } from "@acor/core";
+import {
+  DEFAULT_MANDATE,
+  economicMandateSchema,
+  MULEDGER_USD,
+  newId,
+  parseAmount,
+} from "@acor/core";
 
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized, violations } from "@/lib/api";
 import { listAgents, recordAudit } from "@/lib/platform";
@@ -83,15 +89,24 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const mandate = mandateParse.data;
 
-  const capabilityRows: { capabilityId: string; category: string; price: bigint; unit: string; latencyMs: number; validationSupported: boolean }[] = [];
+  // Capability prices are quoted in US dollars, so they are parsed against the
+  // μLedger's USD unit of account rather than against a rail asset. The asset
+  // identity is stored with the price: a bare number is not a price.
+  const capabilityRows: {
+    capabilityId: string;
+    category: string;
+    price: bigint;
+    unit: string;
+    latencyMs: number;
+    validationSupported: boolean;
+  }[] = [];
   for (const capability of parsed.data.capabilities ?? []) {
-    const price = parseUsd(capability.priceUsd);
+    const price = parseAmount(capability.priceUsd, MULEDGER_USD, { allowNegative: false });
     if (!price.ok) return violations(price.violations, 400);
-    if (price.value < 0n) return badRequest("Capability prices must not be negative.");
     capabilityRows.push({
       capabilityId: capability.capabilityId,
       category: capability.category,
-      price: price.value,
+      price: price.value.atomic,
       unit: capability.unit,
       latencyMs: capability.latencyMs,
       validationSupported: capability.validationSupported,
@@ -139,6 +154,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         capabilityId: capability.capabilityId,
         category: capability.category,
         priceNanos: toNanosColumn(capability.price),
+        priceAtomic: toNanosColumn(capability.price),
+        priceAssetId: MULEDGER_USD,
+        priceDecimals: 9,
         unit: capability.unit,
         latencyMs: capability.latencyMs,
         validationSupported: capability.validationSupported,

@@ -16,15 +16,16 @@ import {
   type PublicClient,
 } from "viem";
 import {
-  baseUnitsToNanos,
+  amountFromAtomic,
+  assetDefinition,
+  canonicalAssetId,
   enforceBounds,
   fail,
   hashIntent,
-  nanosToBaseUnits,
   ok,
+  valueInUsd,
   violation,
   type Keccak256,
-  type Nanos,
   type Outcome,
   type ProtocolCapabilityEngine,
 } from "@acor/core";
@@ -161,28 +162,46 @@ export class ArcAdapter implements SettlementAdapter {
     const client = this.publicClient();
     if (!client) return fail(configurationViolation(this.name, ["ARC_RPC_URL"]));
 
-    const network = this.networks[0] as string;
+    const network = this.networks[0] as "ARC" | "ARC_TESTNET";
     const readings: BalanceReading[] = [];
+    const wanted = new Set(assets.map((asset) => asset.toUpperCase()));
+    const wantsEverything = wanted.size === 0;
+    const now = new Date();
 
     try {
-      for (const asset of assets) {
-        if (asset.toUpperCase() !== "USDC") continue; // only USDC is wired on Arc today
-        const raw = (await client.readContract({
-          address: this.config.arc.usdcAddress as `0x${string}`,
-          abi: [ERC20_BALANCE_OF],
-          functionName: "balanceOf",
-          args: [address as `0x${string}`],
-        })) as bigint;
-        const nanos = baseUnitsToNanos(raw, network, "USDC");
-        if (!nanos.ok) return nanos as Outcome<readonly BalanceReading[]>;
-        readings.push({
-          asset: "USDC",
-          network,
-          address,
-          amount: nanos.value,
-          asOf: new Date(),
-        });
+      // Only USDC is wired on Arc today. Other tokens are not guessed at: an
+      // unregistered contract has an unknown scale and an unknown peg, and both
+      // must be established before a balance means anything.
+      const usdcId = canonicalAssetId(network, "USDC");
+      if (!wantsEverything && !wanted.has(usdcId.toUpperCase()) && !wanted.has("USDC")) {
+        return ok(readings);
       }
+      if (!assetDefinition(usdcId)) {
+        return fail(
+          violation("UNKNOWN_ASSET", `${usdcId} is not a registered asset`, { assetId: usdcId }),
+        );
+      }
+
+      const atomic = (await client.readContract({
+        address: this.config.arc.usdcAddress as `0x${string}`,
+        abi: [ERC20_BALANCE_OF],
+        functionName: "balanceOf",
+        args: [address as `0x${string}`],
+      })) as bigint;
+
+      // `balanceOf` already returns the token's smallest unit, which is exactly
+      // what an AssetAmount holds. There is no conversion and no dollar
+      // assumption; USDC's USD value comes from its registered peg, not from
+      // the fact that the symbol looks like a dollar.
+      const amount = amountFromAtomic(atomic, usdcId);
+      const valued = valueInUsd(amount, { now });
+      readings.push({
+        amount,
+        address,
+        asOf: now,
+        usdValue: valued.ok ? valued.value : null,
+      });
+
       return ok(readings);
     } catch (error) {
       return fail(
@@ -233,7 +252,3 @@ export class ArcAdapter implements SettlementAdapter {
   }
 }
 
-/** Convert a nanodollar amount into the USDC base units an Arc transaction moves. */
-export function toUsdcBaseUnits(amount: Nanos, network: string): Outcome<bigint> {
-  return nanosToBaseUnits(amount, network, "USDC");
-}

@@ -242,6 +242,172 @@ describe("ATTACK: bypassing the mandate at the relay", () => {
   });
 });
 
+describe("ATTACK: the intent amount is not a dollar amount", () => {
+  it("blocks a USDC intent whose value exceeds the mandate, in dollars", async () => {
+    const { relay } = harness();
+    // 5 USDC is 5_000_000 atomic units. Read as nanodollars that would be half
+    // a cent and would sail through a $1 ceiling.
+    const expensive = unwrap(compileIntent({ ...request, maxSpend: "5", nonce: NONCE_B }, NOW));
+    expect(expensive.maxSpend).toBe(5_000_000n);
+    const result = await relay.submit(expensive, "0xsig", SIGNER);
+    expect(result.accepted).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain("MAX_TRANSACTION_EXCEEDED");
+    expect(result.mandate?.valuation?.nanos).toBe(usd("5"));
+  });
+
+  it("blocks an XRP intent when the relay has no price for XRP", async () => {
+    const stores = createMemoryStores();
+    const xrplProvider: ProviderState = { ...provider, destination: "rProviderAccount" };
+    const relay = new IntentRelay({
+      nonces: stores.nonces,
+      intents: stores.intents,
+      verifySignature: async () => true,
+      lookupProvider: async () => xrplProvider,
+      loadBuyerPolicy: async () => ({
+        mandate: economicMandateSchema.parse({
+          dailySpendLimitUsd: "10",
+          maxTransactionUsd: "1",
+          minimumReserveUsd: "0",
+          unverifiedCounterpartyLimitUsd: "0.01",
+          humanApprovalAboveUsd: "5",
+          creditAllowed: false,
+          tokenTradingAllowed: false,
+          allowedAssets: ["XRP"],
+          allowedNetworks: ["XRPL"],
+        }),
+        context: { availableBalance: usd("100"), spentToday: 0n },
+      }),
+      now: () => NOW,
+    });
+
+    const xrpIntent = unwrap(
+      compileIntent(
+        {
+          ...request,
+          settlementAsset: "XRP",
+          network: "XRPL",
+          destination: "rProviderAccount",
+          allowedRails: ["XRPL_PAYMENT"],
+          maxSpend: "0.5",
+          minReceive: "0",
+          maxNetworkFee: "0",
+          nonce: NONCE_A,
+        },
+        NOW,
+      ),
+    );
+    // Half an XRP is 500000 drops. Nothing about that number is a dollar.
+    expect(xrpIntent.maxSpend).toBe(500_000n);
+
+    const result = await relay.submit(xrpIntent, "0xsig", SIGNER);
+    expect(result.accepted).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain("VALUATION_UNAVAILABLE");
+  });
+
+  it("accepts the same XRP intent once a fresh price makes it checkable", async () => {
+    const stores = createMemoryStores();
+    const relay = new IntentRelay({
+      nonces: stores.nonces,
+      intents: stores.intents,
+      verifySignature: async () => true,
+      lookupProvider: async () => ({ ...provider, destination: "rProviderAccount" }),
+      loadBuyerPolicy: async () => ({
+        mandate: economicMandateSchema.parse({
+          dailySpendLimitUsd: "10",
+          maxTransactionUsd: "1",
+          minimumReserveUsd: "0",
+          unverifiedCounterpartyLimitUsd: "0.01",
+          humanApprovalAboveUsd: "5",
+          creditAllowed: false,
+          tokenTradingAllowed: false,
+          allowedAssets: ["XRP"],
+          allowedNetworks: ["XRPL"],
+        }),
+        context: { availableBalance: usd("100"), spentToday: 0n },
+      }),
+      // $0.50 per XRP, so half an XRP is $0.25 — inside the $1 ceiling.
+      loadPriceQuote: async (assetId) => ({
+        assetId,
+        usdNanosPerUnit: usd("0.50"),
+        asOf: NOW,
+        source: "test-oracle",
+      }),
+      now: () => NOW,
+    });
+
+    const xrpIntent = unwrap(
+      compileIntent(
+        {
+          ...request,
+          settlementAsset: "XRP",
+          network: "XRPL",
+          destination: "rProviderAccount",
+          allowedRails: ["XRPL_PAYMENT"],
+          maxSpend: "0.5",
+          minReceive: "0",
+          maxNetworkFee: "0",
+          nonce: NONCE_A,
+        },
+        NOW,
+      ),
+    );
+    const result = await relay.submit(xrpIntent, "0xsig", SIGNER);
+    expect(result.accepted).toBe(true);
+    expect(result.mandate?.valuation?.nanos).toBe(usd("0.25"));
+  });
+
+  it("blocks the same XRP intent when the only price available is stale", async () => {
+    const stores = createMemoryStores();
+    const relay = new IntentRelay({
+      nonces: stores.nonces,
+      intents: stores.intents,
+      verifySignature: async () => true,
+      lookupProvider: async () => ({ ...provider, destination: "rProviderAccount" }),
+      loadBuyerPolicy: async () => ({
+        mandate: economicMandateSchema.parse({
+          dailySpendLimitUsd: "10",
+          maxTransactionUsd: "1",
+          minimumReserveUsd: "0",
+          unverifiedCounterpartyLimitUsd: "0.01",
+          humanApprovalAboveUsd: "5",
+          creditAllowed: false,
+          tokenTradingAllowed: false,
+          allowedAssets: ["XRP"],
+          allowedNetworks: ["XRPL"],
+        }),
+        context: { availableBalance: usd("100"), spentToday: 0n },
+      }),
+      loadPriceQuote: async (assetId) => ({
+        assetId,
+        usdNanosPerUnit: usd("0.50"),
+        asOf: new Date(NOW.getTime() - 86_400_000),
+        source: "test-oracle",
+      }),
+      now: () => NOW,
+    });
+
+    const xrpIntent = unwrap(
+      compileIntent(
+        {
+          ...request,
+          settlementAsset: "XRP",
+          network: "XRPL",
+          destination: "rProviderAccount",
+          allowedRails: ["XRPL_PAYMENT"],
+          maxSpend: "0.5",
+          minReceive: "0",
+          maxNetworkFee: "0",
+          nonce: NONCE_A,
+        },
+        NOW,
+      ),
+    );
+    const result = await relay.submit(xrpIntent, "0xsig", SIGNER);
+    expect(result.accepted).toBe(false);
+    expect(result.violations.map((v) => v.code)).toContain("VALUATION_STALE");
+  });
+});
+
 describe("ATTACK: expiry", () => {
   it("blocks an intent that is already expired on arrival", async () => {
     const { relay } = harness({ now: () => new Date(NOW.getTime() + 600_000) });
