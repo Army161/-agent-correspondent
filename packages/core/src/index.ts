@@ -25,6 +25,7 @@ export * from "./discovery/index";
 export * from "./procurement/index";
 export * from "./procurement/auction";
 export * from "./capability/index";
+export * from "./manifest/index";
 export * from "./router/index";
 export * from "./muledger/ledger";
 export * from "./muledger/netting";

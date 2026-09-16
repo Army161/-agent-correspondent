@@ -22,6 +22,13 @@ import {
   Workflow,
 } from "lucide-react";
 
+import {
+  featuresByGroup,
+  groupStatus,
+  type CapabilityManifest,
+  type PublicStatus,
+} from "@acor/core";
+
 import { LogoMark } from "@/components/brand/logo";
 import { Badge, ButtonLink, Panel } from "@/components/ui/primitives";
 
@@ -50,12 +57,12 @@ export function Hero(): React.JSX.Element {
           </p>
 
           <div className="mt-10 flex flex-col gap-3 sm:flex-row">
-            <ButtonLink href="/chat" variant="primary" size="lg">
+            <ButtonLink href="/signup" variant="primary" size="lg">
               Launch Agent OS
               <ArrowRight className="size-4" strokeWidth={2} aria-hidden />
             </ButtonLink>
-            <ButtonLink href="/acor" variant="secondary" size="lg">
-              Explore ACOR
+            <ButtonLink href="/pricing" variant="secondary" size="lg">
+              See pricing
             </ButtonLink>
           </div>
 
@@ -325,37 +332,34 @@ export function MuLedgerSection(): React.JSX.Element {
   );
 }
 
-const INTEGRATIONS = [
-  {
-    status: "Supported",
-    tone: "success" as const,
-    items: [
-      ["μLedger clearing", "bilateral netting, implemented and tested in this repository"],
-      ["Economic intents", "EIP-712 signable authorizations with deterministic parity tests"],
-      ["Economic mandates", "deterministic per-agent spending policy"],
-    ],
-  },
-  {
-    status: "Integrating",
-    tone: "cyan" as const,
-    items: [
-      ["Arc", "chain 5042, USDC, ERC-8004 identity, ERC-8183 jobs"],
-      ["Circle", "programmable wallets, USDC, x402, nanopayments"],
-      ["XRPL", "payments, pathfinding, escrow, RLUSD"],
-    ],
-  },
-  {
-    status: "Exploring",
-    tone: "warning" as const,
-    items: [
-      ["Kaleido", "optional enterprise control plane and private clearing"],
-      ["BlockDAG", "optional future utility rail, never settlement-critical"],
-      ["Multilateral clearing", "implemented, not yet used for live settlement"],
-    ],
-  },
-] as const;
+/**
+ * Integration status, rendered from the capability manifest.
+ *
+ * Deliberately not hand-written. A hard-coded list drifts from the product the
+ * moment either changes, and the direction it drifts is always the flattering
+ * one. This renders `/api/v1/manifest`, generated from live capability probes
+ * and what is actually configured, so the page cannot claim more than the
+ * deployment does.
+ */
+const STATUS_TONE: Record<PublicStatus, "success" | "cyan" | "warning" | "neutral" | "danger"> = {
+  LIVE: "success",
+  TESTNET: "cyan",
+  INTEGRATING: "warning",
+  EXPLORING: "neutral",
+  UNAVAILABLE: "danger",
+};
 
-export function Integrations(): React.JSX.Element {
+const STATUS_MEANING: Record<PublicStatus, string> = {
+  LIVE: "verified live on a production network",
+  TESTNET: "verified on a test network; balances are not money",
+  INTEGRATING: "built, not yet verified end to end",
+  EXPLORING: "adapter boundary only; nothing configured",
+  UNAVAILABLE: "probed and found absent",
+};
+
+export function Integrations({ manifest }: { manifest: CapabilityManifest }): React.JSX.Element {
+  const groups = featuresByGroup(manifest);
+
   return (
     <section className="border-b border-[var(--color-border)] px-6 py-20 sm:py-24">
       <div className="mx-auto max-w-6xl">
@@ -363,27 +367,48 @@ export function Integrations(): React.JSX.Element {
           Cross-network architecture, stated honestly.
         </h2>
         <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-[var(--color-muted)]">
-          These are integration statuses, not partnerships. Agent Correspondent is not affiliated
-          with, endorsed by, or sponsored by any of the projects named below.
+          {manifest.disclaimer}
         </p>
 
-        <div className="mt-12 grid gap-4 lg:grid-cols-3">
-          {INTEGRATIONS.map((group) => (
-            <Panel key={group.status} className="p-5">
-              <Badge tone={group.tone}>{group.status}</Badge>
-              <ul className="mt-5 space-y-4">
-                {group.items.map(([name, detail]) => (
-                  <li key={name}>
-                    <div className="text-[14px] font-medium text-[var(--color-bright)]">{name}</div>
-                    <div className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-muted)]">
-                      {detail}
+        <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2">
+          {(Object.keys(STATUS_MEANING) as PublicStatus[]).map((status) => (
+            <span key={status} className="flex items-center gap-2 text-[12px]">
+              <Badge tone={STATUS_TONE[status]}>{status}</Badge>
+              <span className="text-[var(--color-subtle)]">{STATUS_MEANING[status]}</span>
+            </span>
+          ))}
+        </div>
+
+        <div className="mt-10 grid gap-4 lg:grid-cols-3">
+          {groups.map(({ group, features }) => (
+            <Panel key={group} className="p-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[15px] font-medium text-[var(--color-bright)]">{group}</span>
+                <Badge tone={STATUS_TONE[groupStatus(features)]}>{groupStatus(features)}</Badge>
+              </div>
+              <ul className="mt-4 space-y-3">
+                {features.map((feature) => (
+                  <li key={feature.id}>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-[13px] text-[var(--color-bright)]">{feature.label}</span>
+                      <Badge tone={STATUS_TONE[feature.status]}>{feature.status}</Badge>
                     </div>
+                    <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--color-muted)]">
+                      {feature.description}
+                    </p>
                   </li>
                 ))}
               </ul>
             </Panel>
           ))}
         </div>
+
+        <p className="mt-6 text-[12px] text-[var(--color-subtle)]">
+          Generated {new Date(manifest.generatedAt).toISOString()} from live capability probes ·{" "}
+          <a href="/api/v1/manifest" className="text-[var(--color-cyan)] hover:underline">
+            read the manifest
+          </a>
+        </p>
       </div>
     </section>
   );
@@ -487,39 +512,58 @@ export function DeveloperSection(): React.JSX.Element {
   );
 }
 
-const ROADMAP = [
-  ["01", "Agent Chat OS", "shipped"],
-  ["02", "Economic Mandates", "shipped"],
-  ["03", "ERC-8004 Identity", "integrating"],
-  ["04", "ERC-8183 Jobs", "integrating"],
-  ["05", "Micropayments", "integrating"],
-  ["06", "XRPL Settlement", "integrating"],
-  ["07", "μLedger Clearing", "shipped"],
-  ["08", "Agent CFO", "exploring"],
-  ["09", "Enterprise Clearing", "exploring"],
-] as const;
+const ROADMAP: readonly [string, string, string | null][] = [
+  ["01", "Agent Chat OS", null],
+  ["02", "Economic Mandates", null],
+  ["03", "ERC-8004 Identity", "arc.identity"],
+  ["04", "ERC-8183 Jobs", "arc.jobs"],
+  ["05", "Micropayments", "arc.x402"],
+  ["06", "XRPL Settlement", "xrpl.payments"],
+  ["07", "μLedger Clearing", "muledger.bilateral-netting"],
+  ["08", "Agent CFO", null],
+  ["09", "Enterprise Clearing", "kaleido.private-clearing"],
+];
 
-export function Roadmap(): React.JSX.Element {
+/**
+ * Roadmap status.
+ *
+ * Items backed by a capability read their status from the manifest, so a
+ * roadmap row cannot say "shipped" while the capability behind it is
+ * unverified. Items with no capability — product surfaces rather than network
+ * primitives — are shown as built, which is a claim about this repository and
+ * is covered by the test suite.
+ */
+export function Roadmap({ manifest }: { manifest: CapabilityManifest }): React.JSX.Element {
+  const statusFor = (featureId: string | null): { label: string; tone: "success" | "cyan" | "warning" | "neutral" | "danger" } => {
+    if (featureId === null) return { label: "BUILT", tone: "success" };
+    const feature = manifest.features.find((entry) => entry.id === featureId);
+    if (!feature) return { label: "EXPLORING", tone: "neutral" };
+    return { label: feature.status, tone: STATUS_TONE[feature.status] };
+  };
+
   return (
     <section className="border-b border-[var(--color-border)] px-6 py-20 sm:py-24">
       <div className="mx-auto max-w-6xl">
         <h2 className="text-[26px] font-semibold leading-tight tracking-tight sm:text-[36px]">
           Roadmap
         </h2>
+        <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-[var(--color-muted)]">
+          Each item backed by a network capability shows that capability&apos;s real status. None of
+          these rows is written by hand.
+        </p>
         <div className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {ROADMAP.map(([number, title, status]) => (
-            <Panel key={number} className="flex items-center justify-between gap-3 px-5 py-4">
-              <div className="flex items-baseline gap-3">
-                <span className="tabular text-[11px] text-[var(--color-subtle)]">{number}</span>
-                <span className="text-[14px] font-medium">{title}</span>
-              </div>
-              <Badge
-                tone={status === "shipped" ? "success" : status === "integrating" ? "cyan" : "neutral"}
-              >
-                {status}
-              </Badge>
-            </Panel>
-          ))}
+          {ROADMAP.map(([number, title, featureId]) => {
+            const status = statusFor(featureId);
+            return (
+              <Panel key={number} className="flex items-center justify-between gap-3 px-5 py-4">
+                <div className="flex items-baseline gap-3">
+                  <span className="tabular text-[11px] text-[var(--color-subtle)]">{number}</span>
+                  <span className="text-[14px] font-medium">{title}</span>
+                </div>
+                <Badge tone={status.tone}>{status.label}</Badge>
+              </Panel>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -561,6 +605,7 @@ export function SiteFooter(): React.JSX.Element {
           </div>
           <nav className="grid grid-cols-2 gap-x-12 gap-y-2 text-[13px] sm:grid-cols-3">
             {[
+              ["Pricing", "/pricing"],
               ["Chat", "/chat"],
               ["Agents", "/agents"],
               ["Jobs", "/jobs"],

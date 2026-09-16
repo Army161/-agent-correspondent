@@ -17,7 +17,7 @@ test.describe("landing page", () => {
       page.getByRole("heading", { name: /Full-Stack Agent Chat OS for the Machine Economy/i }),
     ).toBeVisible();
     await expect(page.getByRole("link", { name: /Launch Agent OS/i })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Explore ACOR/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /See pricing/i })).toBeVisible();
     await expect(page.locator("svg[aria-label='Agent Correspondent']").first()).toBeVisible();
   });
 
@@ -45,7 +45,9 @@ test.describe("landing page", () => {
 
   test("states integration status without claiming partnership", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByText(/These are integration statuses, not partnerships/i)).toBeVisible();
+    // The disclaimer is rendered from the capability manifest, not written into
+    // the page, so it cannot be edited away independently of the statuses.
+    await expect(page.getByText(/not claims of partnership/i)).toBeVisible();
     await expect(
       page.getByText(/not affiliated with, endorsed by, or sponsored by/i).first(),
     ).toBeVisible();

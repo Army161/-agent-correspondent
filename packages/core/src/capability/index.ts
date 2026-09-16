@@ -93,15 +93,22 @@ export const DEFAULT_CAPABILITIES: readonly CapabilityRecord[] = Object.freeze([
   cap("XRPL.BATCH", "UNKNOWN", "amendment-gated"),
   cap("XRPL.PERMISSIONED_DEX", "UNKNOWN", "amendment-gated"),
   // The mu-ledger is this application's own code, so its state is known
-  // without probing anything.
-  cap("MULEDGER.BILATERAL_NETTING", "AVAILABLE", "implemented in @acor/core"),
-  cap("MULEDGER.MULTILATERAL_NETTING", "EXPERIMENTAL", "implemented; not yet used for live settlement"),
+  // without probing anything. Source "internal" records exactly that: verified
+  // by the implementation rather than by a network call, which is why it may
+  // be reported as live while a merely-configured capability may not.
+  cap("MULEDGER.BILATERAL_NETTING", "AVAILABLE", "implemented in @acor/core", "internal"),
+  cap("MULEDGER.MULTILATERAL_NETTING", "EXPERIMENTAL", "implemented; not yet used for live settlement", "internal"),
   cap("KALEIDO.PRIVATE_CLEARING", "UNKNOWN", "optional enterprise integration; not configured"),
   cap("BLOCKDAG.SETTLEMENT", "UNKNOWN", "optional future rail; not configured"),
 ]);
 
-function cap(id: CapabilityId, state: CapabilityState, note: string): CapabilityRecord {
-  return { id, state, source: "default", checkedAt: null, note };
+function cap(
+  id: CapabilityId,
+  state: CapabilityState,
+  note: string,
+  source = "default",
+): CapabilityRecord {
+  return { id, state, source, checkedAt: null, note };
 }
 
 export interface CapabilityEnvironment {
