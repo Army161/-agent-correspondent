@@ -26,7 +26,6 @@ import {
   type EconomicReceipt,
 } from "../src/receipts/index";
 import { computeReputation, type ReputationEvent } from "../src/reputation/index";
-import { routeIntent, type RoutingRequest } from "../src/router/index";
 import { usd } from "../src/units/money";
 
 const T0 = new Date("2026-03-01T00:00:00.000Z");
@@ -163,96 +162,13 @@ describe("protocol capability engine", () => {
 // --------------------------------------------------------------------------
 // Router
 // --------------------------------------------------------------------------
-
-function engineWith(...ids: CapabilityId[]): ProtocolCapabilityEngine {
-  const engine = new ProtocolCapabilityEngine({ production: false });
-  for (const id of ids) engine.set(id, "AVAILABLE", "test");
-  return engine;
-}
-
-const baseRoute: RoutingRequest = {
-  buyerAgentId: "agent_buyer",
-  providerAgentId: "agent_provider",
-  amount: usd("0.004"),
-  settlementAsset: "USDC",
-  buyerNetwork: "ARC",
-  providerNetwork: "ARC",
-  asynchronous: false,
-  requiresEvaluation: false,
-  recurringCounterparty: false,
-  counterpartyVerified: true,
-};
-
-describe("economic router", () => {
-  it("routes a sub-cent synchronous call to a nanopayment rail", () => {
-    const decision = unwrap(routeIntent(baseRoute, engineWith("ARC.X402")));
-    expect(decision.plan.rail).toBe("X402");
-    expect(decision.plan.timing).toBe("IMMEDIATE");
-  });
-
-  it("routes a tiny recurring obligation to the mu-ledger", () => {
-    const decision = unwrap(
-      routeIntent(
-        { ...baseRoute, amount: usd("0.0004"), recurringCounterparty: true },
-        engineWith("MULEDGER.BILATERAL_NETTING", "ARC.X402"),
-      ),
-    );
-    expect(decision.plan.rail).toBe("MULEDGER");
-    expect(decision.plan.timing).toBe("NEXT_CLEARING_CYCLE");
-  });
-
-  it("routes dollar-scale asynchronous work to ERC-8183 escrow", () => {
-    const decision = unwrap(
-      routeIntent(
-        { ...baseRoute, amount: usd("5"), asynchronous: true, requiresEvaluation: true },
-        engineWith("ARC.ERC8183"),
-      ),
-    );
-    expect(decision.plan.rail).toBe("ERC8183_ESCROW");
-    expect(decision.plan.mechanism).toBe("ERC8183_JOB");
-    expect(decision.plan.validation).toBe("EVALUATOR_BEFORE_PAYMENT");
-  });
-
-  it("routes a cross-currency payment through XRPL pathfinding", () => {
-    const decision = unwrap(
-      routeIntent(
-        {
-          ...baseRoute,
-          amount: usd("2"),
-          providerNetwork: "XRPL",
-          providerAsset: "RLUSD",
-        },
-        engineWith("XRPL.PATHFINDING"),
-      ),
-    );
-    expect(decision.plan.rail).toBe("XRPL_PATHFINDING");
-    expect(decision.plan.fxRoute).toEqual({ from: "USDC", to: "RLUSD", via: "XRPL_DEX" });
-  });
-
-  it("ATTACK: refuses to route through a primitive that is not verified live", () => {
-    const result = routeIntent(baseRoute, new ProtocolCapabilityEngine({ production: true }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.violations.map((v) => v.code)).toContain("NO_ELIGIBLE_ROUTE");
-    }
-  });
-
-  it("reports the routes it rejected and why", () => {
-    const decision = unwrap(routeIntent(baseRoute, engineWith("ARC.X402")));
-    expect(decision.rejected.map((r) => r.rail)).toContain("CIRCLE_NANOPAYMENT");
-  });
-
-  it("is deterministic across repeated calls", () => {
-    const engine = engineWith("ARC.X402", "ARC.CIRCLE_NANOPAYMENT");
-    const a = unwrap(routeIntent(baseRoute, engine));
-    const b = unwrap(routeIntent(baseRoute, engine));
-    expect(a.plan.rail).toBe(b.plan.rail);
-  });
-
-  it("refuses to route a non-positive amount", () => {
-    expect(routeIntent({ ...baseRoute, amount: 0n }, engineWith("ARC.X402")).ok).toBe(false);
-  });
-});
+//
+// Routing moved to `routing.test.ts` when the router gained explicit funding
+// sources, treasury inventory and rebalancing. Every property this block
+// asserted is carried there — rail selection by size and delivery model,
+// capability gating, rejected-route reporting, determinism and the refusal of
+// non-positive amounts — plus the cross-network cases this API could not
+// express, because it had no concept of where the money actually was.
 
 // --------------------------------------------------------------------------
 // Discovery + procurement

@@ -65,6 +65,7 @@ export type EconomicErrorCode =
   // routing / procurement
   | "NO_ELIGIBLE_ROUTE"
   | "NO_ELIGIBLE_PROVIDER"
+  | "INSUFFICIENT_INVENTORY"
   | "AUCTION_COMMIT_MISMATCH"
   // job lifecycle
   | "ILLEGAL_JOB_TRANSITION";

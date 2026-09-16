@@ -26,23 +26,27 @@ import {
   transactions,
 } from "@acor/db";
 import {
+  canonicalAssetId,
   compileIntent,
   describeIntent,
   economicMandateSchema,
   evaluateMandate,
   explainRanking,
+  formatAmount,
   formatUsd,
   matchProviders,
   MuLedger,
   normalizeProvider,
+  parseAmount,
   parseUsd,
   rankProviders,
-  routeIntent,
+  routePayment,
   summarizeDecision,
   type DiscoveredProvider,
   type EconomicMandate,
   type LedgerEntry,
   type Nanos,
+  type TreasuryHolding,
 } from "@acor/core";
 import { getSettlementPlane } from "@acor/adapters";
 
@@ -161,6 +165,26 @@ async function spentToday(agentId: string): Promise<Nanos | null> {
  * Annotated as `ToolSet` rather than inferred: pnpm's nested layout makes the
  * inferred type unnameable across the workspace boundary.
  */
+/**
+ * What the treasury can actually draw on, per rail.
+ *
+ * Balances come from live rail reads, so a deployment with no rail configured
+ * has no inventory — and no inventory means nothing can be routed. That is the
+ * correct answer: a route planned against a balance nobody has read is a route
+ * that fails at execution.
+ */
+async function loadTreasuryInventory(_organizationId: string): Promise<TreasuryHolding[]> {
+  const { adapters } = getSettlementPlane();
+  const holdings: TreasuryHolding[] = [];
+  for (const adapter of adapters) {
+    const health = await adapter.health(getSettlementPlane().capabilities).catch(() => null);
+    if (!health || health.status !== "READY") continue;
+    // A READY adapter still needs a bound treasury address to read a balance
+    // from. None is configured in this deployment, so nothing is reported.
+  }
+  return holdings;
+}
+
 export function buildTools(context: ToolContext): ToolSet {
   return {
     discover_providers: tool({
@@ -318,29 +342,41 @@ export function buildTools(context: ToolContext): ToolSet {
 
     route_payment: tool({
       description:
-        "Ask the economic router which rail, mechanism and settlement timing a payment should use. Only routes whose network primitives are verified live are returned.",
+        "Ask the economic router which rail, mechanism and settlement timing a payment would use, given what the treasury actually holds. Only routes whose primitives are verified live and whose rail holds enough inventory are returned.",
       inputSchema: z.object({
         buyerAgentId: z.string(),
         providerAgentId: z.string(),
-        amountUsd: z.string(),
+        amount: z.string().describe("Decimal amount in the settlement asset, e.g. '0.004'"),
+        settlementAsset: z.enum(["USDC", "RLUSD", "EURC", "XRP"]).default("USDC"),
+        network: z.enum(["ARC", "ARC_TESTNET", "XRPL", "XRPL_TESTNET", "MULEDGER"]).default("ARC"),
+        destination: z.string().default("agent_provider"),
         asynchronous: z.boolean().default(false),
         requiresEvaluation: z.boolean().default(false),
         recurringCounterparty: z.boolean().default(false),
       }),
       execute: async (input) => {
-        const amount = parseUsd(input.amountUsd);
-        if (!amount.ok) {
-          return { error: "INVALID_AMOUNT", message: amount.violations[0]?.message };
+        const assetId = canonicalAssetId(input.network, input.settlementAsset);
+        const payout = parseAmount(input.amount, assetId, { allowNegative: false });
+        if (!payout.ok) {
+          return {
+            error: payout.violations[0]?.code ?? "INVALID_AMOUNT",
+            message: payout.violations[0]?.message,
+          };
         }
+
         const { capabilities } = getSettlementPlane();
-        const decision = routeIntent(
+        // Treasury inventory is read from the configured rails. This deployment
+        // has none attached, so the list is empty — and an empty treasury
+        // cannot fund anything, which is the honest answer rather than a route
+        // that would fail at execution.
+        const inventory = await loadTreasuryInventory(context.organizationId);
+
+        const result = routePayment(
           {
             buyerAgentId: input.buyerAgentId,
             providerAgentId: input.providerAgentId,
-            amount: amount.value,
-            settlementAsset: "USDC",
-            buyerNetwork: "ARC",
-            providerNetwork: "ARC",
+            payout: { amount: payout.value, destination: input.destination },
+            inventory,
             asynchronous: input.asynchronous,
             requiresEvaluation: input.requiresEvaluation,
             recurringCounterparty: input.recurringCounterparty,
@@ -348,20 +384,39 @@ export function buildTools(context: ToolContext): ToolSet {
           },
           capabilities,
         );
-        if (!decision.ok) {
+
+        if (!result.ok) {
           return {
-            error: "NO_ELIGIBLE_ROUTE",
-            violations: decision.violations.map((v) => ({ code: v.code, message: v.message })),
+            error: result.violations[0]?.code ?? "NO_ELIGIBLE_ROUTE",
+            violations: result.violations.map((violation) => ({
+              code: violation.code,
+              message: violation.message,
+            })),
+            shortfall: result.shortfall ? formatAmount(result.shortfall) : null,
+            // Rebalancing is a separate operation. It is surfaced as a
+            // suggestion for an operator, never executed as part of a payment.
+            rebalances: result.rebalances.map((rebalance) => ({
+              from: rebalance.from.network,
+              to: rebalance.to.network,
+              amount: formatAmount(rebalance.amount),
+              mechanism: rebalance.mechanism,
+              atomicWithPayment: rebalance.atomicWithPayment,
+              rationale: rebalance.rationale,
+            })),
+            rejected: result.rejected,
           };
         }
+
+        const { plan, rejected } = result.decision;
         return {
-          rail: decision.value.plan.rail,
-          mechanism: decision.value.plan.mechanism,
-          network: decision.value.plan.network,
-          timing: decision.value.plan.timing,
-          validation: decision.value.plan.validation,
-          rationale: decision.value.plan.rationale,
-          rejected: decision.value.rejected,
+          rail: plan.rail,
+          mechanism: plan.mechanism,
+          network: plan.network,
+          timing: plan.timing,
+          validation: plan.validation,
+          fundedFrom: `${plan.source.network} · ${plan.source.amount.symbol}`,
+          rationale: plan.rationale,
+          rejected,
         };
       },
     }),

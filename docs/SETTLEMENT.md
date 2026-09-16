@@ -29,27 +29,83 @@ Two rules hold for every adapter:
 
 ## Routing
 
-The economic router (`packages/core/src/router`) maps a request to a rail:
+The rule that shapes the router: **a payment can only be made from money that is
+already on the rail making it.**
+
+XRPL pathfinding converts and routes assets that are already on XRPL; it cannot
+debit an Arc wallet. An Arc contract cannot reach an XRPL account. Two
+independent ledgers have no shared commit, so presenting a movement between them
+as one atomic payment is not a routing decision — it is a false statement about
+settlement risk.
+
+Three facts go in, and they are kept apart:
+
+| Input | Meaning |
+| --- | --- |
+| `payout` | what the provider must receive, in which asset, on which network |
+| `inventory` | what is actually held, per network and per asset, right now |
+| capabilities | which primitives have been verified live |
+
+Every candidate route names the asset it must be funded from, and that asset is
+always on the same network as the payment. There is deliberately no candidate
+whose funding network differs from its payout network.
 
 | Shape | Route |
 | --- | --- |
-| tiny, recurring, same counterparty | μLedger obligation, settled next cycle |
-| sub-cent, synchronous | x402 / Circle nanopayment |
-| dollar-scale or asynchronous or evaluated | ERC-8183 escrow |
-| cross-currency or cross-network | XRPL payment / pathfinding |
+| tiny, recurring, same counterparty | μLedger obligation — nothing moves, so no inventory is needed |
+| sub-cent, synchronous, funded on Arc | x402 / Circle nanopayment |
+| dollar-scale or asynchronous or evaluated, funded on Arc | ERC-8183 escrow |
+| same asset, funded on XRPL | XRPL payment |
+| different asset, **both on XRPL** | XRPL pathfinding, which converts in one transaction |
+| funded on Arc, payout on XRPL | **no route** — see rebalancing |
 
-Thresholds are configuration, not opinions expressed at the call site:
+Size thresholds are configuration, not opinions expressed at the call site:
 
-```ts
-nanopaymentCeiling:    $0.01
-escrowFloor:           $1.00
-ledgerAccrualCeiling:  $0.001
+```
+nanopaymentCeilingUsd:   $0.01
+escrowFloorUsd:          $1.00
+ledgerAccrualCeilingUsd: $0.001
 ```
 
-The router enumerates every structurally valid route, discards the ones whose
-primitives are not verified live, orders the survivors by configured preference,
-and returns the winner **plus the rejected routes and why**. Routing logic never
-lives in a React component.
+An asset with no registered peg has no known size band, so the size-banded rails
+are not offered for it. The mandate engine is what refuses an unvaluable spend;
+the router only shapes the route.
+
+### Inventory
+
+Only **unreserved** inventory can fund a payment. `reserved` is what is already
+committed to in-flight payments or escrow; ignoring it is how a treasury
+double-spends one balance across two concurrent routes.
+
+When no rail can fund a payout, the router reports `INSUFFICIENT_INVENTORY` with
+the shortfall **in the asset that is short** — and it computes that shortfall
+independently of which check bound first, so an operator sees the inventory gap
+even when a capability was also missing.
+
+### Rebalancing
+
+A rebalance moves inventory from one rail to another so a future payment becomes
+possible. It is **never part of a payment**:
+
+```ts
+interface RebalanceProposal {
+  from: { network, assetId };
+  to: { network, assetId };
+  amount: AssetAmount;
+  mechanism: "CIRCLE_GATEWAY" | "MANUAL_TREASURY_TRANSFER" | "EXTERNAL_BRIDGE";
+  atomicWithPayment: false;   // always, and stated rather than implied
+  rationale: string;
+}
+```
+
+It has its own confirmation, its own failure modes and its own audit record, and
+the payment it unlocks cannot be attempted until it has settled.
+
+**Circle Gateway is offered only when the capability is live *and* the runtime
+configuration lists both networks as supported.** That list
+(`gatewaySupportedNetworks`) is empty until it has been read from Circle. USDC
+existing on a chain is not evidence that Gateway covers it, and assuming
+coverage is how a payment gets routed into a bridge that does not exist.
 
 ## Capability gating
 
