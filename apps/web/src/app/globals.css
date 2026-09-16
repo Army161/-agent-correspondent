@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+/*
+ * Agent Correspondent brand system.
+ *
+ * The reference points are Circle, Stripe, a Bloomberg terminal and modern AI
+ * infrastructure — financial software that happens to be dark, not a neon
+ * crypto site. Cyan is a signal colour: it marks the live, the actionable and
+ * the economically significant, and it is used sparingly enough that it still
+ * means something when it appears.
+ */
+
+@theme {
+  /* Surfaces, darkest to lightest. */
+  --color-background: #03070b;
+  --color-elevated: #08131b;
+  --color-panel: #0b1821;
+  --color-border: #14313c;
+
+  /* Signal. */
+  --color-cyan: #00e5ff;
+  --color-teal: #00cfcf;
+
+  /* Type. */
+  --color-bright: #f7fbff;
+  --color-muted: #8ea3b3;
+  --color-subtle: #607786;
+
+  /* Status. */
+  --color-success: #37e6a1;
+  --color-warning: #ffb84d;
+  --color-danger: #ff5c70;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Space Grotesk", var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --radius-panel: 14px;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background-color: var(--color-background);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-bright);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/*
+ * Every economic value on the platform is monospaced. A column of prices that
+ * does not align is a column you cannot scan, and scanning numbers is most of
+ * what this product is for.
+ */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-cyan) 28%, transparent);
+  color: var(--color-bright);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+::-webkit-scrollbar-thumb {
+  background: #16333f;
+  border-radius: 999px;
+  border: 2px solid var(--color-background);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #1d4552;
+}
+
+/* The faint grid behind the hero: infrastructure, not decoration. */
+.grid-field {
+  background-image:
+    linear-gradient(to right, rgba(0, 229, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 229, 255, 0.045) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+.glow-cyan {
+  box-shadow:
+    0 0 0 1px rgba(0, 229, 255, 0.16),
+    0 0 40px -12px rgba(0, 229, 255, 0.4);
+}
+
+@keyframes acor-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.pulse-dot {
+  animation: acor-pulse 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

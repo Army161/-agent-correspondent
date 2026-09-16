@@ -1,0 +1,29 @@
+{
+  "name": "agent-correspondent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent Correspondent — Full-Stack Agent Chat OS for the Machine Economy",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @acor/web dev",
+    "build": "pnpm --filter @acor/web build",
+    "start": "pnpm --filter @acor/web start",
+    "lint": "pnpm -r --no-bail lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "db:generate": "pnpm --filter @acor/db generate",
+    "db:push": "pnpm --filter @acor/db push"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3",
+    "viem": "2.56.5",
+    "vitest": "5.0.1"
+  }
+}

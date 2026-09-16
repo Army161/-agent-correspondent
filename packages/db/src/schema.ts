@@ -1,0 +1,709 @@
+/**
+ * Agent Correspondent database schema.
+ *
+ * Conventions that hold throughout:
+ *
+ *  - Money is `numeric(38, 0)` holding *nanodollars* as an integer string.
+ *    Never `float`, never `money`, never a decimal the driver might coerce.
+ *    The application layer converts to `bigint` on read and back on write.
+ *  - Financial and event tables are append-only. `economic_receipts`,
+ *    `muledger_entries`, `reputation_events`, `job_events` and `audit_logs`
+ *    have no UPDATE path in application code, and a database trigger (see
+ *    `migrations/0001_append_only.sql`) rejects UPDATE and DELETE on them.
+ *  - Every table that can be reached by an API key carries an `organization_id`
+ *    so row-level scoping is always possible.
+ */
+
+import { relations, sql } from "drizzle-orm";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  real,
+  text,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from "drizzle-orm/pg-core";
+
+/** Nanodollar column: an exact integer, stored as numeric to survive any driver. */
+const nanos = (name: string) => numeric(name, { precision: 38, scale: 0 });
+
+const id = (name = "id") => varchar(name, { length: 128 });
+
+const createdAt = () =>
+  timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow();
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+export const agentStatusEnum = pgEnum("agent_status", ["ACTIVE", "PAUSED", "DISABLED"]);
+export const jobStateEnum = pgEnum("job_state", [
+  "DRAFT",
+  "QUOTED",
+  "FUNDED",
+  "IN_PROGRESS",
+  "SUBMITTED",
+  "EVALUATING",
+  "COMPLETE",
+  "REJECTED",
+  "DISPUTED",
+  "SETTLED",
+  "CANCELLED",
+]);
+export const intentStatusEnum = pgEnum("intent_status", [
+  "OPEN",
+  "CONSUMED",
+  "CANCELLED",
+  "EXPIRED",
+]);
+export const ledgerStateEnum = pgEnum("ledger_state", ["OPEN", "NETTED", "SETTLED", "VOID"]);
+export const settlementStatusEnum = pgEnum("settlement_status", [
+  "PENDING",
+  "SUBMITTED",
+  "CONFIRMED",
+  "FAILED",
+]);
+export const evaluationResultEnum = pgEnum("evaluation_result", [
+  "PASS",
+  "FAIL",
+  "NOT_EVALUATED",
+  "DISPUTED",
+]);
+export const capabilityStateEnum = pgEnum("capability_state", [
+  "AVAILABLE",
+  "DISABLED",
+  "TESTNET_ONLY",
+  "EXPERIMENTAL",
+  "UNKNOWN",
+]);
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+export const organizations = pgTable("organizations", {
+  id: id().primaryKey(),
+  name: text("name").notNull(),
+  slug: varchar("slug", { length: 64 }).notNull().unique(),
+  createdAt: createdAt(),
+});
+
+export const users = pgTable(
+  "users",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    email: varchar("email", { length: 320 }).notNull(),
+    displayName: text("display_name"),
+    /** scrypt hash, `scrypt$N$r$p$salt$hash`. Never a plaintext or reversible value. */
+    passwordHash: text("password_hash").notNull(),
+    role: varchar("role", { length: 32 }).notNull().default("owner"),
+    createdAt: createdAt(),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [uniqueIndex("users_email_unique").on(table.email)],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: id().primaryKey(),
+    userId: id("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** SHA-256 of the session token. The token itself is never stored. */
+    tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("sessions_token_hash_unique").on(table.tokenHash),
+    index("sessions_user_idx").on(table.userId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+export const agents = pgTable(
+  "agents",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    ownerUserId: id("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    /** `openai`, `anthropic`, `local`, ... */
+    provider: varchar("provider", { length: 64 }).notNull(),
+    model: varchar("model", { length: 128 }).notNull(),
+    systemPrompt: text("system_prompt"),
+    status: agentStatusEnum("status").notNull().default("ACTIVE"),
+    /** ERC-8004 agent id once the identity is registered on-chain. */
+    erc8004AgentId: varchar("erc8004_agent_id", { length: 128 }),
+    identityUri: text("identity_uri"),
+    /** Tool ids this agent may call. Empty means no tools. */
+    allowedTools: jsonb("allowed_tools").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [index("agents_org_idx").on(table.organizationId)],
+);
+
+export const agentCapabilities = pgTable(
+  "agent_capabilities",
+  {
+    id: id().primaryKey(),
+    agentId: id("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    capabilityId: varchar("capability_id", { length: 128 }).notNull(),
+    category: varchar("category", { length: 64 }).notNull(),
+    /** Price per unit in nanodollars. */
+    priceNanos: nanos("price_nanos").notNull(),
+    unit: varchar("unit", { length: 32 }).notNull().default("call"),
+    latencyMs: integer("latency_ms").notNull().default(0),
+    validationSupported: boolean("validation_supported").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("agent_capability_unique").on(table.agentId, table.capabilityId)],
+);
+
+export const agentWallets = pgTable(
+  "agent_wallets",
+  {
+    id: id().primaryKey(),
+    agentId: id("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    network: varchar("network", { length: 32 }).notNull(),
+    address: varchar("address", { length: 128 }).notNull(),
+    /**
+     * Where the signing key lives: `circle` (custodial API), `external`
+     * (user-controlled), `readonly`. No column here ever holds key material —
+     * see docs/SECURITY.md.
+     */
+    custody: varchar("custody", { length: 32 }).notNull(),
+    /** Opaque reference into the custody provider, e.g. a Circle wallet id. */
+    externalRef: varchar("external_ref", { length: 128 }),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("agent_wallet_unique").on(table.agentId, table.network, table.address)],
+);
+
+export const economicMandates = pgTable(
+  "economic_mandates",
+  {
+    id: id().primaryKey(),
+    agentId: id("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    dailySpendLimitNanos: nanos("daily_spend_limit_nanos").notNull(),
+    maxTransactionNanos: nanos("max_transaction_nanos").notNull(),
+    minimumReserveNanos: nanos("minimum_reserve_nanos").notNull(),
+    unverifiedCounterpartyLimitNanos: nanos("unverified_counterparty_limit_nanos").notNull(),
+    humanApprovalAboveNanos: nanos("human_approval_above_nanos").notNull(),
+    creditAllowed: boolean("credit_allowed").notNull().default(false),
+    tokenTradingAllowed: boolean("token_trading_allowed").notNull().default(false),
+    allowedAssets: jsonb("allowed_assets").$type<string[]>().notNull(),
+    allowedNetworks: jsonb("allowed_networks").$type<string[]>().notNull(),
+    /** Monotonic; a new version is written rather than the old one edited. */
+    version: integer("version").notNull().default(1),
+    /** The user who authorized this version. A model can never be the author. */
+    authorizedByUserId: id("authorized_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("mandate_agent_version_unique").on(table.agentId, table.version)],
+);
+
+// ---------------------------------------------------------------------------
+// Intents
+// ---------------------------------------------------------------------------
+
+export const economicIntents = pgTable(
+  "economic_intents",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    buyerAgentId: id("buyer_agent_id").notNull(),
+    providerAgentId: id("provider_agent_id").notNull(),
+    service: text("service").notNull(),
+    serviceHash: varchar("service_hash", { length: 66 }).notNull(),
+    maxSpendNanos: nanos("max_spend_nanos").notNull(),
+    minReceiveNanos: nanos("min_receive_nanos").notNull(),
+    maxNetworkFeeNanos: nanos("max_network_fee_nanos").notNull(),
+    settlementAsset: varchar("settlement_asset", { length: 16 }).notNull(),
+    allowedRails: jsonb("allowed_rails").$type<string[]>().notNull(),
+    maxFxSlippageBps: integer("max_fx_slippage_bps").notNull().default(0),
+    evaluator: varchar("evaluator", { length: 256 }).notNull(),
+    network: varchar("network", { length: 32 }).notNull(),
+    destination: varchar("destination", { length: 128 }).notNull(),
+    chainId: integer("chain_id").notNull(),
+    verifyingContract: varchar("verifying_contract", { length: 66 }).notNull(),
+    nonce: varchar("nonce", { length: 66 }).notNull(),
+    deadline: timestamp("deadline", { withTimezone: true, mode: "date" }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    /** Canonical off-chain hash of the intent document. */
+    intentHash: varchar("intent_hash", { length: 66 }).notNull(),
+    status: intentStatusEnum("status").notNull().default("OPEN"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("intents_buyer_idx").on(table.buyerAgentId),
+    index("intents_provider_idx").on(table.providerAgentId),
+  ],
+);
+
+export const intentSignatures = pgTable(
+  "intent_signatures",
+  {
+    id: id().primaryKey(),
+    intentId: id("intent_id")
+      .notNull()
+      .references(() => economicIntents.id, { onDelete: "cascade" }),
+    signer: varchar("signer", { length: 128 }).notNull(),
+    signature: text("signature").notNull(),
+    /** The EIP-712 digest that was actually signed. */
+    digest: varchar("digest", { length: 66 }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("intent_signature_unique").on(table.intentId, table.signer)],
+);
+
+/**
+ * Burned nonces.
+ *
+ * The unique key is (signer, chain_id, verifying_contract, nonce): the same
+ * nonce on another chain or another contract is a different reservation. This
+ * table is what makes replay — including cross-chain replay — impossible rather
+ * than merely unlikely, so rows are never deleted.
+ */
+export const intentNonces = pgTable(
+  "intent_nonces",
+  {
+    signer: varchar("signer", { length: 128 }).notNull(),
+    chainId: integer("chain_id").notNull(),
+    verifyingContract: varchar("verifying_contract", { length: 66 }).notNull(),
+    nonce: varchar("nonce", { length: 66 }).notNull(),
+    intentId: id("intent_id"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.signer, table.chainId, table.verifyingContract, table.nonce],
+    }),
+  ],
+);
+
+export const quotes = pgTable(
+  "quotes",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    providerAgentId: id("provider_agent_id").notNull(),
+    capabilityId: varchar("capability_id", { length: 128 }).notNull(),
+    priceNanos: nanos("price_nanos").notNull(),
+    effectiveCostNanos: nanos("effective_cost_nanos").notNull(),
+    settlementAsset: varchar("settlement_asset", { length: 16 }).notNull(),
+    latencyMs: integer("latency_ms").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index("quotes_provider_idx").on(table.providerAgentId)],
+);
+
+// ---------------------------------------------------------------------------
+// Jobs
+// ---------------------------------------------------------------------------
+
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    buyerAgentId: id("buyer_agent_id").notNull(),
+    providerAgentId: id("provider_agent_id"),
+    intentId: id("intent_id").references(() => economicIntents.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    service: text("service").notNull(),
+    requestPayload: jsonb("request_payload"),
+    state: jobStateEnum("state").notNull().default("DRAFT"),
+    escrowNanos: nanos("escrow_nanos"),
+    settlementAsset: varchar("settlement_asset", { length: 16 }),
+    network: varchar("network", { length: 32 }),
+    /** ERC-8183 job id once the job exists on-chain. */
+    onchainJobId: varchar("onchain_job_id", { length: 128 }),
+    evaluator: varchar("evaluator", { length: 256 }),
+    resultHash: varchar("result_hash", { length: 66 }),
+    deliverableUri: text("deliverable_uri"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("jobs_org_idx").on(table.organizationId),
+    index("jobs_state_idx").on(table.state),
+  ],
+);
+
+/** Append-only. One row per state transition, with the actor that caused it. */
+export const jobEvents = pgTable(
+  "job_events",
+  {
+    id: id().primaryKey(),
+    jobId: id("job_id")
+      .notNull()
+      .references(() => jobs.id, { onDelete: "cascade" }),
+    fromState: jobStateEnum("from_state"),
+    toState: jobStateEnum("to_state").notNull(),
+    transition: varchar("transition", { length: 48 }).notNull(),
+    /** `user:<id>`, `agent:<id>`, or `system`. */
+    actor: varchar("actor", { length: 128 }).notNull(),
+    detail: jsonb("detail"),
+    createdAt: createdAt(),
+  },
+  (table) => [index("job_events_job_idx").on(table.jobId)],
+);
+
+// ---------------------------------------------------------------------------
+// Money movement
+// ---------------------------------------------------------------------------
+
+export const transactions = pgTable(
+  "transactions",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: id("agent_id").references(() => agents.id, { onDelete: "set null" }),
+    intentId: id("intent_id").references(() => economicIntents.id, { onDelete: "set null" }),
+    direction: varchar("direction", { length: 8 }).notNull(),
+    amountNanos: nanos("amount_nanos").notNull(),
+    feeNanos: nanos("fee_nanos").notNull().default("0"),
+    asset: varchar("asset", { length: 16 }).notNull(),
+    network: varchar("network", { length: 32 }).notNull(),
+    rail: varchar("rail", { length: 48 }).notNull(),
+    counterparty: varchar("counterparty", { length: 128 }),
+    reference: varchar("reference", { length: 256 }),
+    status: settlementStatusEnum("status").notNull().default("PENDING"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("transactions_org_idx").on(table.organizationId),
+    // One settlement reference per network, ever: the duplicate-settlement guard.
+    uniqueIndex("transactions_reference_unique").on(table.network, table.reference),
+  ],
+);
+
+export const settlements = pgTable(
+  "settlements",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    cycleId: id("cycle_id"),
+    intentId: id("intent_id").references(() => economicIntents.id, { onDelete: "set null" }),
+    fromAgentId: id("from_agent_id").notNull(),
+    toAgentId: id("to_agent_id").notNull(),
+    amountNanos: nanos("amount_nanos").notNull(),
+    asset: varchar("asset", { length: 16 }).notNull(),
+    network: varchar("network", { length: 32 }).notNull(),
+    rail: varchar("rail", { length: 48 }).notNull(),
+    status: settlementStatusEnum("status").notNull().default("PENDING"),
+    reference: varchar("reference", { length: 256 }),
+    /** Idempotency key: retrying a settlement must not send twice. */
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    createdAt: createdAt(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [uniqueIndex("settlements_idempotency_unique").on(table.idempotencyKey)],
+);
+
+/** Append-only. The gross history that every clearing cycle is derived from. */
+export const muledgerEntries = pgTable(
+  "muledger_entries",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    debtorAgentId: id("debtor_agent_id").notNull(),
+    creditorAgentId: id("creditor_agent_id").notNull(),
+    amountNanos: nanos("amount_nanos").notNull(),
+    asset: varchar("asset", { length: 16 }).notNull(),
+    service: text("service").notNull(),
+    intentId: id("intent_id"),
+    receiptId: id("receipt_id"),
+    state: ledgerStateEnum("state").notNull().default("OPEN"),
+    cycleId: id("cycle_id"),
+    /** One economic event, one entry. This is the double-credit defence. */
+    idempotencyKey: varchar("idempotency_key", { length: 160 }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("muledger_idempotency_unique").on(table.idempotencyKey),
+    index("muledger_debtor_idx").on(table.debtorAgentId),
+    index("muledger_creditor_idx").on(table.creditorAgentId),
+    index("muledger_state_idx").on(table.state),
+  ],
+);
+
+export const clearingCycles = pgTable(
+  "clearing_cycles",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    asset: varchar("asset", { length: 16 }).notNull(),
+    mode: varchar("mode", { length: 24 }).notNull(),
+    grossTotalNanos: nanos("gross_total_nanos").notNull(),
+    netTotalNanos: nanos("net_total_nanos").notNull(),
+    entryCount: integer("entry_count").notNull(),
+    instructionCount: integer("instruction_count").notNull(),
+    /** Canonical hash over inputs and outputs; makes the cycle reproducible. */
+    proofHash: varchar("proof_hash", { length: 66 }).notNull(),
+    instructions: jsonb("instructions").notNull(),
+    openedAt: timestamp("opened_at", { withTimezone: true, mode: "date" }).notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+  },
+  (table) => [index("clearing_org_idx").on(table.organizationId)],
+);
+
+/** Append-only, immutable. Reputation is derived from these rows. */
+export const economicReceipts = pgTable(
+  "economic_receipts",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    buyerAgentId: id("buyer_agent_id").notNull(),
+    providerAgentId: id("provider_agent_id").notNull(),
+    intentId: id("intent_id"),
+    jobId: id("job_id"),
+    service: text("service").notNull(),
+    quotedPriceNanos: nanos("quoted_price_nanos").notNull(),
+    finalPriceNanos: nanos("final_price_nanos").notNull(),
+    network: varchar("network", { length: 32 }).notNull(),
+    settlementRail: varchar("settlement_rail", { length: 48 }).notNull(),
+    settlementAsset: varchar("settlement_asset", { length: 16 }).notNull(),
+    transactionReference: varchar("transaction_reference", { length: 256 }).notNull(),
+    resultHash: varchar("result_hash", { length: 66 }).notNull(),
+    evaluator: varchar("evaluator", { length: 256 }).notNull(),
+    evaluationResult: evaluationResultEnum("evaluation_result").notNull(),
+    reputationEffect: integer("reputation_effect").notNull().default(0),
+    /** Canonical hash of the receipt document. Detects any later edit. */
+    receiptHash: varchar("receipt_hash", { length: 66 }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("receipts_settlement_unique").on(table.network, table.transactionReference),
+    index("receipts_provider_idx").on(table.providerAgentId),
+    index("receipts_buyer_idx").on(table.buyerAgentId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Reputation
+// ---------------------------------------------------------------------------
+
+/** Append-only. */
+export const reputationEvents = pgTable(
+  "reputation_events",
+  {
+    id: id().primaryKey(),
+    agentId: id("agent_id").notNull(),
+    counterpartyAgentId: id("counterparty_agent_id").notNull(),
+    kind: varchar("kind", { length: 48 }).notNull(),
+    valueNanos: nanos("value_nanos").notNull().default("0"),
+    receiptId: id("receipt_id"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index("reputation_events_agent_idx").on(table.agentId)],
+);
+
+export const reputationSnapshots = pgTable(
+  "reputation_snapshots",
+  {
+    id: id().primaryKey(),
+    agentId: id("agent_id").notNull(),
+    score: integer("score"),
+    completedJobs: integer("completed_jobs").notNull().default(0),
+    failedJobs: integer("failed_jobs").notNull().default(0),
+    disputes: integer("disputes").notNull().default(0),
+    settledValueNanos: nanos("settled_value_nanos").notNull().default("0"),
+    distinctCounterparties: integer("distinct_counterparties").notNull().default(0),
+    successRate: real("success_rate"),
+    evidence: jsonb("evidence"),
+    computedAt: timestamp("computed_at", { withTimezone: true, mode: "date" }).notNull(),
+  },
+  (table) => [index("reputation_snapshots_agent_idx").on(table.agentId)],
+);
+
+// ---------------------------------------------------------------------------
+// Platform
+// ---------------------------------------------------------------------------
+
+export const networkCapabilities = pgTable(
+  "network_capabilities",
+  {
+    id: varchar("id", { length: 64 }).primaryKey(),
+    state: capabilityStateEnum("state").notNull().default("UNKNOWN"),
+    source: varchar("source", { length: 32 }).notNull().default("default"),
+    note: text("note"),
+    checkedAt: timestamp("checked_at", { withTimezone: true, mode: "date" }),
+  },
+);
+
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** SHA-256 of the key. The key itself is shown once, at creation, and never stored. */
+    keyHash: varchar("key_hash", { length: 128 }).notNull(),
+    prefix: varchar("prefix", { length: 16 }).notNull(),
+    scopes: jsonb("scopes").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true, mode: "date" }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+  },
+  (table) => [uniqueIndex("api_keys_hash_unique").on(table.keyHash)],
+);
+
+export const webhooks = pgTable(
+  "webhooks",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    events: jsonb("events").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** HMAC secret used to sign deliveries. */
+    secretHash: varchar("secret_hash", { length: 128 }).notNull(),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (table) => [index("webhooks_org_idx").on(table.organizationId)],
+);
+
+/** Replay defence for inbound webhooks: a delivery id is accepted exactly once. */
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: id().primaryKey(),
+    source: varchar("source", { length: 64 }).notNull(),
+    externalId: varchar("external_id", { length: 256 }).notNull(),
+    receivedAt: createdAt(),
+  },
+  (table) => [uniqueIndex("webhook_delivery_unique").on(table.source, table.externalId)],
+);
+
+/** Append-only. Every economic decision, including the refusals. */
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id"),
+    actor: varchar("actor", { length: 128 }).notNull(),
+    action: varchar("action", { length: 96 }).notNull(),
+    subject: varchar("subject", { length: 128 }),
+    /** `ALLOW`, `DENY`, `REQUIRE_HUMAN_APPROVAL`, `ERROR`. */
+    outcome: varchar("outcome", { length: 32 }).notNull(),
+    detail: jsonb("detail"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("audit_logs_org_idx").on(table.organizationId),
+    index("audit_logs_action_idx").on(table.action),
+  ],
+);
+
+export const chatThreads = pgTable(
+  "chat_threads",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: id("user_id").references(() => users.id, { onDelete: "set null" }),
+    agentId: id("agent_id").references(() => agents.id, { onDelete: "set null" }),
+    title: text("title").notNull().default("New conversation"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [index("chat_threads_org_idx").on(table.organizationId)],
+);
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: id().primaryKey(),
+    threadId: id("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    role: varchar("role", { length: 16 }).notNull(),
+    content: text("content").notNull(),
+    /** Tool/action cards rendered alongside the message. */
+    parts: jsonb("parts"),
+    createdAt: createdAt(),
+  },
+  (table) => [index("chat_messages_thread_idx").on(table.threadId)],
+);
+
+// ---------------------------------------------------------------------------
+// Relations
+// ---------------------------------------------------------------------------
+
+export const organizationRelations = relations(organizations, ({ many }) => ({
+  users: many(users),
+  agents: many(agents),
+}));
+
+export const agentRelations = relations(agents, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [agents.organizationId],
+    references: [organizations.id],
+  }),
+  capabilities: many(agentCapabilities),
+  wallets: many(agentWallets),
+  mandates: many(economicMandates),
+}));
+
+export const jobRelations = relations(jobs, ({ many, one }) => ({
+  events: many(jobEvents),
+  intent: one(economicIntents, {
+    fields: [jobs.intentId],
+    references: [economicIntents.id],
+  }),
+}));

@@ -1,0 +1,19 @@
+{
+  "name": "@acor/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"@acor/core: lint handled by typecheck + tests\""
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  }
+}
