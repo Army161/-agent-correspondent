@@ -16,6 +16,18 @@ export * from "./config";
 export { ArcAdapter, keccak256 } from "./arc";
 export { XrplAdapter, decodeCurrency } from "./xrpl";
 export { verifyXrplOwnershipProof } from "./xrpl-ownership";
+export {
+  XRPL_CREDENTIAL_TYPES,
+  buildCredentialAccept,
+  buildCredentialCreate,
+  buildCredentialDelete,
+  buildPermissionedDomainSet,
+  checkLedgerUri,
+  readCredentials,
+  type LedgerCredential,
+  type PreparedTransaction,
+  type XrplCredentialType,
+} from "./xrpl-credentials";
 export { CircleAdapter } from "./circle";
 export { KaleidoAdapter, BlockDagAdapter } from "./optional";
 
