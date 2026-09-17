@@ -158,6 +158,8 @@ importers:
         specifier: 0.31.10
         version: 0.31.10
 
+  packages/sdk: {}
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':

@@ -1,0 +1,157 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  # Test-only values, generated for this workflow. None of these authorize a
+  # real payment, a real credential a counterparty would trust, or access to
+  # a real account -- see the comments below and docs/DEPLOYMENT.md.
+  AUTH_SECRET: "ci-test-8aef5830b984d3db3cd111c84eeb169db6444954440bb715c2b38a817e1a162"
+  AUTH_BASE_URL: "http://127.0.0.1:3111"
+  AUTH_TRUSTED_ORIGINS: "http://127.0.0.1:3111"
+  # The whole suite runs from one loopback address, so every test looks like
+  # one very determined client. Limiting stays on; only the threshold moves.
+  AUTH_RATE_LIMIT_MAX: "5000"
+  AUTH_RATE_LIMIT_SIGN_IN: "500"
+  AUTH_RATE_LIMIT_SIGN_UP: "500"
+  AUTH_RATE_LIMIT_RESET: "200"
+  # A dummy verifying contract address, so /api/v1/intents can compile
+  # EIP-712 typed data. Nothing is deployed at this address; nothing here
+  # ever reaches a real chain.
+  ARC_INTENT_VERIFIER_ADDRESS: "0x000000000000000000000000000000000000dEaD"
+  ARC_CHAIN_ID: "5042"
+  # Local-only Paddle billing configuration -- a test webhook secret and
+  # price ids. No API key is set, so no checkout can be created and no
+  # request reaches Paddle.
+  PADDLE_WEBHOOK_SECRET: "pdl_ntfset_ci_test_secret_value"
+  PADDLE_PRICE_BUILDER_MONTHLY: "pri_builder_monthly_test"
+  PADDLE_PRICE_PRO_MONTHLY: "pri_pro_monthly_test"
+  # A local-only Ed25519 issuing key. It signs sentences about agents; it
+  # authorizes no payment and controls no funds.
+  CREDENTIAL_ISSUER_KEY: "69ae5c263b2e9fe305e078426fd9a836c47bf4161c834e5c87fbd030f2d2b6cb"
+  # Optional ML-DSA-65 (FIPS 204) secondary attestation seed -- additive
+  # only, see docs/POST_QUANTUM_READINESS.md.
+  CREDENTIAL_ISSUER_MLDSA_SEED: "738989af9205b70a1c37a39af5508f1af062f71298d8b693b40ff6dc30b09f27"
+  # AES-256-GCM key for encrypting outbound webhook signing secrets at rest,
+  # see docs/WEBHOOKS.md.
+  WEBHOOK_ENCRYPTION_KEY: "843c1d8c0e53065e6b348166d4e4feda7073b54e6c40495dc55da7336c71dae9"
+  # A local-only platform operator, so the RAIL/GLOBAL kill-switch and
+  # quarantine paths can be exercised in tests.
+  PLATFORM_OPERATOR_EMAILS: "operator@example.com"
+
+jobs:
+  checks:
+    name: lint, typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.11"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  e2e-configured:
+    name: e2e (with a database)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: acor
+          POSTGRES_PASSWORD: acor
+          POSTGRES_DB: agent_correspondent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acor"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: "postgres://acor:acor@127.0.0.1:5432/agent_correspondent"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.11"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm --filter @acor/db migrate
+
+      - run: pnpm build
+
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start the app
+        run: pnpm --filter @acor/web start --port 3111 &
+
+      - name: Wait for the app to be ready
+        run: npx wait-on http://127.0.0.1:3111/api/health --timeout 60000
+
+      - name: Run the e2e suite against a configured deployment
+        run: pnpm e2e
+        env:
+          E2E_BASE_URL: "http://127.0.0.1:3111"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces-configured
+          path: test-results/
+          retention-days: 7
+
+  e2e-unconfigured:
+    name: e2e (without a database)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.11"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Install Playwright's Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: "Start the app (no DATABASE_URL: every data surface must read NOT CONNECTED)"
+        run: pnpm --filter @acor/web start --port 3112 &
+
+      - name: Wait for the app to be ready
+        run: npx wait-on http://127.0.0.1:3112/api/health --timeout 60000
+
+      - name: Run the e2e suite against an unconfigured deployment
+        run: pnpm e2e
+        env:
+          E2E_BASE_URL: "http://127.0.0.1:3112"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces-unconfigured
+          path: test-results/
+          retention-days: 7
