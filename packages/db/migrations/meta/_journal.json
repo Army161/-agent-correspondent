@@ -120,6 +120,13 @@
       "when": 1789642250273,
       "tag": "0016_sentinel_append_only",
       "breakpoints": false
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789643462389,
+      "tag": "0017_square_red_hulk",
+      "breakpoints": true
     }
   ]
 }

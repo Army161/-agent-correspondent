@@ -70,7 +70,7 @@ export interface PreCheckResult {
  * here only affects whether the *anomaly heuristic* fires early, never
  * whether money can move.
  */
-function candidateAmountNanos(intent: EconomicIntent): bigint {
+export function candidateAmountNanosOf(intent: EconomicIntent): bigint {
   const assetId = intentAssetId(intent);
   if (!assetDefinition(assetId)) return 0n;
   const amount = amountFromAtomic(intent.maxSpend, assetId);
@@ -81,7 +81,7 @@ function candidateAmountNanos(intent: EconomicIntent): bigint {
 export async function preCheckIntent(input: PreCheckInput): Promise<PreCheckResult> {
   const db = getDb();
 
-  const amountNanos = candidateAmountNanos(input.intent);
+  const amountNanos = candidateAmountNanosOf(input.intent);
   const providerId = providerIdFor(input.intent.network);
   const [ownsAgent, killSwitchRaw, quarantined] = await Promise.all([
     db

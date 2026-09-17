@@ -19,8 +19,9 @@ import { parseIntent } from "@acor/core";
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized, violations } from "@/lib/api";
 import { canAuthorizeOn } from "@/lib/identity/gates";
 import { createRelay } from "@/lib/relay";
-import { preCheckIntent } from "@/lib/security/evaluate";
+import { preCheckIntent, candidateAmountNanosOf } from "@/lib/security/evaluate";
 import { openIncident } from "@/lib/security/incidents";
+import { checkConvoy } from "@/lib/convoy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -88,6 +89,34 @@ export async function POST(request: Request): Promise<NextResponse> {
         message: sentinel.decision.message,
         incidentId: sentinel.incidentId,
       },
+      { status: 202 },
+    );
+  }
+
+  // Convoy Mode: if this agent belongs to a convoy, its shared pool and the
+  // convoy's *combined* activity across every member are checked next --
+  // catching coordinated draining across several agents that each look
+  // unremarkable on their own. Same rule as the Sentinel-5 pre-check: a held
+  // or denied request here never reaches the relay.
+  const convoy = await checkConvoy(
+    principal.organizationId,
+    intent.value.buyerAgentId,
+    candidateAmountNanosOf(intent.value),
+  );
+  if (!convoy.ok) {
+    const incidentId = await openIncident({
+      organizationId: principal.organizationId,
+      decision: {
+        outcome: "HOLD",
+        layers: [],
+        decidedBy: "ANOMALY",
+        code: convoy.code,
+        message: convoy.message,
+      },
+      summary: `Convoy check held intent submission for agent ${intent.value.buyerAgentId}: ${convoy.message ?? ""}`,
+    });
+    return NextResponse.json(
+      { accepted: false, held: true, error: convoy.code, message: convoy.message, incidentId },
       { status: 202 },
     );
   }

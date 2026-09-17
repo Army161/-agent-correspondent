@@ -22,6 +22,7 @@ export type IdPrefix =
   | "sec"
   | "inc"
   | "kill"
+  | "convoy"
   | "sub"
   | "bill"
   | "mandate";

@@ -352,6 +352,60 @@ export const onboardingProgress = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Convoy Mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Convoy Mode: a named, bounded group of an organization's own agents that
+ * share a single daily spending pool and are watched for *correlated*
+ * behaviour, not just individual behaviour.
+ *
+ * The security case: an attacker who has taken over several agents in one
+ * fleet can spread authorizations across them to stay under each agent's own
+ * per-agent velocity threshold while draining the fleet as a whole. A pooled
+ * budget and a combined velocity check catch that; per-agent checks alone
+ * cannot, by construction.
+ *
+ * Membership is exclusive — an agent belongs to at most one convoy — so the
+ * pool an authorization draws against is never ambiguous.
+ */
+export const agentConvoys = pgTable(
+  "agent_convoys",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** Combined ceiling across every member, for the rolling day. In addition
+     *  to, never instead of, each member's own individual mandate. */
+    dailyPoolLimitNanos: nanos("daily_pool_limit_nanos").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [index("agent_convoys_org_idx").on(table.organizationId)],
+);
+
+export const agentConvoyMembers = pgTable(
+  "agent_convoy_members",
+  {
+    id: id().primaryKey(),
+    convoyId: id("convoy_id")
+      .notNull()
+      .references(() => agentConvoys.id, { onDelete: "cascade" }),
+    agentId: id("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    addedAt: createdAt(),
+  },
+  (table) => [
+    // An agent belongs to at most one convoy: the pool an authorization
+    // draws against must never be ambiguous.
+    uniqueIndex("agent_convoy_members_agent_unique").on(table.agentId),
+    index("agent_convoy_members_convoy_idx").on(table.convoyId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Sentinel-5 security control plane
 // ---------------------------------------------------------------------------
 
