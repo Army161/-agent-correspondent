@@ -12,6 +12,10 @@
  * job that reads as SETTLED has a receipt, an intent that reads as CONSUMED
  * has a job, and there is no window where one exists without the other.
  *
+ * A settlement also fires a `job.funded`/`job.settled` webhook once the
+ * transaction has committed (see `lib/webhooks`) -- deliberately outside the
+ * transaction, so a webhook can never fire for a transition that rolled back.
+ *
  * Funding today is MULEDGER-only. A job priced in a live rail's currency and
  * funded by an Arc- or XRPL-settled intent is not implemented — see
  * docs/MULEDGER.md and the "not yet built" note in this module.
@@ -48,6 +52,7 @@ import {
 } from "@acor/core";
 
 import { recordAudit } from "./platform";
+import { dispatchWebhookEvent } from "./webhooks";
 
 /** The μLedger accounting asset for a settlement-asset symbol. USD is the fallback. */
 function muledgerAssetFor(symbol: string): { id: string; decimals: number } {
@@ -224,50 +229,70 @@ export async function transitionJob(input: TransitionInput): Promise<JobResult> 
   if (!next.ok) return { ok: false, error: next.violations[0]?.message ?? "Illegal transition." };
   const toState = next.value;
 
+  type SideEffectFailure = { ok: false; error: string; code?: string };
+  let sideEffectFailure: SideEffectFailure | null = null;
+
   try {
-    if (input.transition === "FUND") {
-      const result = await fundJob(db, job, input.intentId);
-      if (!result.ok) return result;
-    } else if (input.transition === "SETTLE") {
-      const result = await settleJob(db, job, from);
-      if (!result.ok) return result;
-    }
+    await db.transaction(async (tx) => {
+      if (input.transition === "FUND") {
+        const result = await fundJob(tx, job, input.intentId);
+        if (!result.ok) {
+          sideEffectFailure = result;
+          throw new Error("side effect refused");
+        }
+      } else if (input.transition === "SETTLE") {
+        const result = await settleJob(tx, job, from);
+        if (!result.ok) {
+          sideEffectFailure = result;
+          throw new Error("side effect refused");
+        }
+      }
 
-    await db
-      .update(jobs)
-      .set({
-        state: toState,
-        updatedAt: new Date(),
-        ...(input.transition === "SUBMIT"
-          ? {
-              resultHash: input.resultHash ?? null,
-              deliverableUri: input.deliverableUri ?? null,
-            }
-          : {}),
-      })
-      .where(eq(jobs.id, job.id));
+      await tx
+        .update(jobs)
+        .set({
+          state: toState,
+          updatedAt: new Date(),
+          ...(input.transition === "SUBMIT"
+            ? {
+                resultHash: input.resultHash ?? null,
+                deliverableUri: input.deliverableUri ?? null,
+              }
+            : {}),
+        })
+        .where(eq(jobs.id, job.id));
 
-    await db.insert(jobEvents).values({
-      id: newId("evt"),
-      jobId: job.id,
-      fromState: from,
-      toState,
-      transition: input.transition,
-      actor: input.actor,
-      detail: null,
-    });
-
-    await recordAudit({
-      organizationId: input.organizationId,
-      actor: input.actor,
-      action: `job.${input.transition.toLowerCase()}`,
-      subject: job.id,
-      outcome: "ALLOW",
-      detail: { from, to: toState },
+      await tx.insert(jobEvents).values({
+        id: newId("evt"),
+        jobId: job.id,
+        fromState: from,
+        toState,
+        transition: input.transition,
+        actor: input.actor,
+        detail: null,
+      });
     });
   } catch (cause) {
+    if (sideEffectFailure) return sideEffectFailure;
     console.error("[jobs] transition failed:", cause);
     return { ok: false, error: "Could not apply this transition." };
+  }
+
+  await recordAudit({
+    organizationId: input.organizationId,
+    actor: input.actor,
+    action: `job.${input.transition.toLowerCase()}`,
+    subject: job.id,
+    outcome: "ALLOW",
+    detail: { from, to: toState },
+  });
+
+  if (input.transition === "FUND" || input.transition === "SETTLE") {
+    await dispatchWebhookEvent(
+      input.organizationId,
+      input.transition === "FUND" ? "job.funded" : "job.settled",
+      { jobId: job.id, from, to: toState },
+    );
   }
 
   return { ok: true, jobId: job.id, state: toState };

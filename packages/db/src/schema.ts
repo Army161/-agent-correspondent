@@ -1321,8 +1321,14 @@ export const webhooks = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     url: text("url").notNull(),
     events: jsonb("events").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
-    /** HMAC secret used to sign deliveries. */
-    secretHash: varchar("secret_hash", { length: 128 }).notNull(),
+    /**
+     * The HMAC signing secret, AES-256-GCM encrypted at rest under
+     * WEBHOOK_ENCRYPTION_KEY (see lib/webhooks/crypto.ts). Signing a delivery
+     * requires the plaintext secret, so unlike an API key this cannot be
+     * stored as a one-way hash; encryption is the honest alternative to
+     * storing it in the clear.
+     */
+    secretCiphertext: text("secret_ciphertext").notNull(),
     active: boolean("active").notNull().default(true),
     createdAt: createdAt(),
   },
@@ -1339,6 +1345,31 @@ export const webhookDeliveries = pgTable(
     receivedAt: createdAt(),
   },
   (table) => [uniqueIndex("webhook_delivery_unique").on(table.source, table.externalId)],
+);
+
+/**
+ * One attempt to deliver one outbound event to one subscription. Observability
+ * only -- there is no queue or retry worker behind this (see
+ * `lib/webhooks/index.ts`), so this is a record of what was tried, not a
+ * pending-work table.
+ */
+export const webhookDeliveryAttempts = pgTable(
+  "webhook_delivery_attempts",
+  {
+    id: id().primaryKey(),
+    webhookId: id("webhook_id")
+      .notNull()
+      .references(() => webhooks.id, { onDelete: "cascade" }),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    event: varchar("event", { length: 128 }).notNull(),
+    ok: boolean("ok").notNull(),
+    statusCode: integer("status_code"),
+    error: text("error"),
+    attemptedAt: createdAt(),
+  },
+  (table) => [index("webhook_delivery_attempts_webhook_idx").on(table.webhookId, table.attemptedAt)],
 );
 
 /** Append-only. Every economic decision, including the refusals. */
