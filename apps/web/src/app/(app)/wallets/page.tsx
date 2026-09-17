@@ -48,6 +48,11 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
   // this page can reach is one injected into the browser — and it says so
   // rather than showing a button that cannot work.
   const walletConnectAvailable = Boolean(process.env.NEXT_PUBLIC_REOWN_PROJECT_ID?.trim());
+  // Xaman signs for the XRPL. Without its credentials the page says so rather
+  // than offering a network a browser-injected wallet cannot sign for.
+  const xamanAvailable = Boolean(
+    process.env.XAMAN_API_KEY?.trim() && process.env.XAMAN_API_SECRET?.trim(),
+  );
 
   return (
     <>
@@ -106,6 +111,7 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
               agents={connectable}
               networks={["ARC", "ARC_TESTNET"]}
               walletConnectAvailable={walletConnectAvailable}
+              xamanAvailable={xamanAvailable}
             />
           ) : (
             <p className="px-5 py-4 text-[13px] text-[var(--color-muted)]">

@@ -148,3 +148,132 @@ export function verifyOwnershipProof(
 
   return ok(recovered.value.toLowerCase());
 }
+
+// ---------------------------------------------------------------------------
+// XRPL
+// ---------------------------------------------------------------------------
+
+/**
+ * The challenge an XRPL account signs.
+ *
+ * XRPL addresses are not chain-scoped the way an EVM address is, so the network
+ * is named rather than numbered — and named in the message, because binding a
+ * testnet account as if it were mainnet is exactly the mistake worth making
+ * impossible.
+ */
+export interface XrplOwnershipChallenge {
+  readonly domain: string;
+  /** The classic `r...` address being claimed. */
+  readonly address: string;
+  readonly statement: string;
+  readonly uri: string;
+  /** `XRPL` or `XRPL_TESTNET`. */
+  readonly network: string;
+  readonly nonce: string;
+  readonly issuedAt: Date;
+  readonly expiresAt: Date;
+  readonly resource: string;
+}
+
+/**
+ * Domain separation for XRPL proofs.
+ *
+ * Every XRPL signing routine prepends a four-byte prefix to what it hashes:
+ * `STX\0` for a single-signed transaction, `SMT\0` for a multi-signed one, and
+ * `CLM\0` for a payment-channel claim. This prefix is none of those, so a
+ * signature collected here cannot be a valid signature over a transaction or a
+ * claim — the signer is committing to a sentence, not to a transfer.
+ *
+ * It is a prefix, not a cipher. The signing itself is XRPL's own ed25519 or
+ * secp256k1 scheme, unchanged.
+ */
+export const XRPL_PROOF_PREFIX = "ACOR";
+
+/** Classic XRPL addresses: base58 with the ripple alphabet, starting `r`. */
+const XRPL_ADDRESS = /^r[rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz]{24,63}$/;
+
+/** Render the message an XRPL wallet will display and sign. */
+export function xrplOwnershipMessage(challenge: XrplOwnershipChallenge): Outcome<string> {
+  for (const [field, value] of [
+    ["domain", challenge.domain],
+    ["statement", challenge.statement],
+    ["uri", challenge.uri],
+    ["network", challenge.network],
+    ["nonce", challenge.nonce],
+    ["resource", challenge.resource],
+  ] as const) {
+    if (!ASCII_TEXT.test(value)) {
+      return fail(
+        violation(
+          "CHALLENGE_MALFORMED",
+          `${field} must be printable ASCII with no line breaks; a newline here would forge the rest of the message`,
+          { field },
+        ),
+      );
+    }
+  }
+  if (!XRPL_ADDRESS.test(challenge.address)) {
+    return fail(violation("CHALLENGE_MALFORMED", "address must be a classic XRPL address"));
+  }
+  if (!/^[A-Za-z0-9]{8,64}$/.test(challenge.nonce)) {
+    return fail(violation("CHALLENGE_MALFORMED", "nonce must be 8-64 alphanumeric characters"));
+  }
+
+  const lines = [
+    `${challenge.domain} asks you to prove control of this XRPL account:`,
+    challenge.address,
+    "",
+    challenge.statement,
+    "",
+    `URI: ${challenge.uri}`,
+    "Version: 1",
+    `Network: ${challenge.network}`,
+    `Nonce: ${challenge.nonce}`,
+    `Issued At: ${challenge.issuedAt.toISOString()}`,
+    `Expiration Time: ${challenge.expiresAt.toISOString()}`,
+    "Resources:",
+    `- ${challenge.resource}`,
+  ];
+  return ok(lines.join("\n"));
+}
+
+/**
+ * The exact bytes an XRPL key signs, as uppercase hex.
+ *
+ * `ripple-keypairs` takes its message as hex, so this is the canonical form of
+ * the payload: the prefix, then the message in UTF-8.
+ */
+export function xrplProofPayloadHex(message: string): string {
+  const prefix = new TextEncoder().encode(XRPL_PROOF_PREFIX);
+  const body = new TextEncoder().encode(message);
+  const joined = new Uint8Array(prefix.length + body.length);
+  joined.set(prefix, 0);
+  joined.set(body, prefix.length);
+  let out = "";
+  for (const byte of joined) out += byte.toString(16).padStart(2, "0");
+  return out.toUpperCase();
+}
+
+/**
+ * Whether the challenge is still answerable.
+ *
+ * Split out from verification because the signature check needs XRPL key
+ * handling, which lives in `@acor/adapters`; the time rules do not, and belong
+ * with the rest of the kernel's determinism.
+ */
+export function xrplChallengeWindow(
+  challenge: XrplOwnershipChallenge,
+  now: Date,
+): Outcome<true> {
+  if (now.getTime() >= challenge.expiresAt.getTime()) {
+    return fail(
+      violation("CHALLENGE_EXPIRED", "this challenge has expired; request a new one", {
+        expiresAt: challenge.expiresAt.toISOString(),
+      }),
+    );
+  }
+  if (now.getTime() < challenge.issuedAt.getTime() - 60_000) {
+    return fail(violation("CHALLENGE_MALFORMED", "challenge is not valid yet"));
+  }
+  return ok(true);
+}

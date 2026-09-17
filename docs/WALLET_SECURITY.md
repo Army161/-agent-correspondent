@@ -104,6 +104,50 @@ WalletConnect needs a Reown project id. Without `NEXT_PUBLIC_REOWN_PROJECT_ID`
 the page says so and offers only a browser-injected wallet, rather than showing
 a button that cannot work.
 
+## XRPL
+
+Same exchange, different signature scheme.
+
+`packages/core/src/wallet/ownership.ts` builds the message (pure, ledger-free);
+`packages/adapters/src/xrpl-ownership.ts` verifies it, because that needs XRPL
+key handling.
+
+Two things make it safe:
+
+1. **Domain separation.** Every XRPL signing routine prepends a four-byte prefix
+   to what it hashes: `STX\0` for a single-signed transaction, `SMT\0` for a
+   multi-signed one, `CLM\0` for a payment-channel claim. Ours is `ACOR`, which
+   is none of them — so a signature collected here cannot be replayed as a
+   transaction or a claim. The signer commits to a sentence, never a transfer.
+   That is a prefix, not a cipher: the signing is XRPL's own ed25519 or
+   secp256k1 scheme via `ripple-keypairs`, unchanged.
+2. **Derivation, not assertion.** The claimed address is not compared to
+   something the caller sent — it is derived from the public key that produced
+   the signature. A caller presenting a stranger's address with their own key
+   fails there.
+
+The public key is required for XRPL and absent for EVM, and that asymmetry is
+real rather than an oversight: an EVM signature carries a recovery parameter, so
+the address falls out of the signature itself. An XRPL signature does not.
+
+The message names the **network** rather than a chain id, because an XRPL
+address is not chain-scoped. Binding a testnet account as though it were mainnet
+is exactly the mistake worth making impossible, so `XRPL` and `XRPL_TESTNET` are
+distinct in the signed text.
+
+XRPL addresses are stored **byte-identical**. Base58 is case-significant;
+lowercasing one the way an EVM address is lowercased destroys it.
+
+A wrong-curve signature makes `ripple-keypairs` throw while parsing. That is
+caught and returned as a violation — a failed proof must never surface as a 500.
+
+### In the browser
+
+It cannot be, yet. A browser-injected wallet signs for EVM chains, not the XRPL,
+and Xaman needs API credentials this deployment does not have. The wallets page
+says exactly that and points at the API, rather than offering a network it
+cannot sign for.
+
 ## Signature rules
 
 Shared with intent authorization, in `packages/core/src/crypto/ecdsa.ts`. One
@@ -131,7 +175,7 @@ a watch-only address stored unverified.
 ## Not yet built
 
 - WalletConnect / Reown (needs a project id).
-- XRPL wallet binding (a different signature scheme — see docs/XRPL.md).
+- Xaman, for XRPL binding from the browser (needs API credentials).
 - Circle programmable wallets (needs credentials).
 - Rotating a bound wallet, which should require a fresh session as well as a
   proof.

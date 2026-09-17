@@ -2,8 +2,12 @@
  * Ask for a proof of wallet control.
  *
  * Returns a message for the caller's wallet to sign. The message is single-use,
- * expires in ten minutes, and names the agent it will bind to — so a proof
- * collected for one agent cannot bind an address to another.
+ * expires in ten minutes, and names the agent and the network it will bind to —
+ * so a proof collected for one agent, or for testnet, cannot bind elsewhere.
+ *
+ * EVM and XRPL messages differ in shape because the two ecosystems render
+ * different things legibly, but both are domain-separated so that the signature
+ * can never be replayed as a transaction.
  */
 
 import { NextResponse } from "next/server";
@@ -18,7 +22,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
-  network: z.enum(["ARC", "ARC_TESTNET"]),
+  network: z.enum(["ARC", "ARC_TESTNET", "XRPL", "XRPL_TESTNET"]),
   address: z.string().min(4).max(128),
 });
 

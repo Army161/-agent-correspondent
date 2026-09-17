@@ -39,10 +39,13 @@ export function ConnectWallet({
   agents,
   networks,
   walletConnectAvailable,
+  xamanAvailable,
 }: {
   agents: readonly ConnectableAgent[];
+  /** EVM networks only — a browser-injected wallet cannot sign for the XRPL. */
   networks: readonly string[];
   walletConnectAvailable: boolean;
+  xamanAvailable: boolean;
 }): React.JSX.Element {
   const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [network, setNetwork] = useState(networks[0] ?? "ARC");
@@ -192,6 +195,19 @@ export function ConnectWallet({
           ? null
           : " WalletConnect is not configured on this deployment, so only a browser-injected wallet can be used."}
       </p>
+
+      {xamanAvailable ? null : (
+        <p className="text-[11px] leading-relaxed text-[var(--color-subtle)]">
+          XRPL accounts cannot be bound from this page: a browser-injected wallet signs for EVM
+          chains, not for the XRPL, and no Xaman credentials are configured on this deployment. The
+          proof exchange for XRPL is available through the API —{" "}
+          <code className="font-mono text-[11px]">
+            POST /api/v1/agents/&#123;id&#125;/wallets/challenge
+          </code>{" "}
+          with an <code className="font-mono text-[11px]">XRPL</code> network, then the same binding
+          endpoint with the signature and the signing public key.
+        </p>
+      )}
 
       {bound ? (
         <p className="text-[13px] text-[var(--color-success)]">

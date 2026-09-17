@@ -8,6 +8,7 @@
 
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { privateKeyToAccount } from "viem/accounts";
+import { deriveAddress, deriveKeypair, generateSeed, sign } from "ripple-keypairs";
 
 const OWNER = privateKeyToAccount(
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
@@ -82,6 +83,103 @@ async function createAgent(page: Page, name: string): Promise<string> {
   expect(created.status).toBe(201);
   return created.json.agentId as string;
 }
+
+test.describe("XRPL wallet ownership", () => {
+  test.skip(async ({ request }) => !(await databaseConfigured(request)), "database not configured");
+
+  test("an XRPL account is bound by deriving it from the signing key", async ({ page }) => {
+    await signUp(page);
+    const agentId = await createAgent(page, "XRPL buyer");
+
+    const pair = deriveKeypair(generateSeed({ algorithm: "ed25519" }));
+    const address = deriveAddress(pair.publicKey);
+
+    const challenge = await api(page, "POST", `/api/v1/agents/${agentId}/wallets/challenge`, {
+      network: "XRPL_TESTNET",
+      address,
+    });
+    expect(challenge.status).toBe(201);
+
+    const message = challenge.json.message as string;
+    expect(message).toContain("asks you to prove control of this XRPL account");
+    expect(message).toContain("Network: XRPL_TESTNET");
+    expect(message).toContain(address);
+
+    // The payload the wallet signs: our four-byte prefix, then the message.
+    // Never an XRPL transaction prefix, so this can never become a transfer.
+    const payload = Buffer.from(`ACOR${message}`, "utf8").toString("hex").toUpperCase();
+    const signature = sign(payload, pair.privateKey);
+
+    const bound = await api(page, "POST", `/api/v1/agents/${agentId}/wallets`, {
+      network: "XRPL_TESTNET",
+      address,
+      custody: "external",
+      isPrimary: true,
+      nonce: challenge.json.nonce,
+      signature,
+      publicKey: pair.publicKey,
+    });
+    expect(bound.status).toBe(201);
+    expect(bound.json.verified).toBe(true);
+
+    const wallets = await api(page, "GET", `/api/v1/agents/${agentId}/wallets`);
+    // Base58 is case-significant: the address must come back byte-identical.
+    expect(wallets.json.wallets).toMatchObject([{ address, verified: true }]);
+  });
+
+  test("ATTACK: an XRPL proof without its public key is refused", async ({ page }) => {
+    await signUp(page);
+    const agentId = await createAgent(page, "XRPL buyer");
+
+    const pair = deriveKeypair(generateSeed({ algorithm: "ed25519" }));
+    const address = deriveAddress(pair.publicKey);
+    const challenge = await api(page, "POST", `/api/v1/agents/${agentId}/wallets/challenge`, {
+      network: "XRPL_TESTNET",
+      address,
+    });
+    const payload = Buffer.from(`ACOR${challenge.json.message as string}`, "utf8")
+      .toString("hex")
+      .toUpperCase();
+
+    const bound = await api(page, "POST", `/api/v1/agents/${agentId}/wallets`, {
+      network: "XRPL_TESTNET",
+      address,
+      custody: "external",
+      nonce: challenge.json.nonce,
+      signature: sign(payload, pair.privateKey),
+    });
+    expect(bound.status).toBe(400);
+    expect(bound.json.error).toBe("PROOF_REQUIRED");
+  });
+
+  test("ATTACK: a stranger's key does not bind another account", async ({ page }) => {
+    await signUp(page);
+    const agentId = await createAgent(page, "XRPL buyer");
+
+    const owner = deriveKeypair(generateSeed({ algorithm: "ed25519" }));
+    const stranger = deriveKeypair(generateSeed({ algorithm: "ed25519" }));
+    const address = deriveAddress(owner.publicKey);
+
+    const challenge = await api(page, "POST", `/api/v1/agents/${agentId}/wallets/challenge`, {
+      network: "XRPL_TESTNET",
+      address,
+    });
+    const payload = Buffer.from(`ACOR${challenge.json.message as string}`, "utf8")
+      .toString("hex")
+      .toUpperCase();
+
+    const bound = await api(page, "POST", `/api/v1/agents/${agentId}/wallets`, {
+      network: "XRPL_TESTNET",
+      address,
+      custody: "external",
+      nonce: challenge.json.nonce,
+      signature: sign(payload, stranger.privateKey),
+      publicKey: stranger.publicKey,
+    });
+    expect(bound.status).toBe(400);
+    expect(bound.json.error).toBe("SIGNER_MISMATCH");
+  });
+});
 
 test.describe("wallet ownership", () => {
   test.skip(async ({ request }) => !(await databaseConfigured(request)), "database not configured");

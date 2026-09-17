@@ -29,9 +29,12 @@ import {
   newId,
   ownershipMessage,
   verifyOwnershipProof,
+  xrplOwnershipMessage,
   type Keccak256,
   type OwnershipChallenge,
+  type XrplOwnershipChallenge,
 } from "@acor/core";
+import { verifyXrplOwnershipProof } from "@acor/adapters";
 
 import { SITE_URL } from "../env";
 
@@ -43,7 +46,14 @@ export const CHALLENGE_TTL_SECONDS = 10 * 60;
 const STATEMENT =
   "Prove you control this wallet so it can be bound to your agent. This signature authorizes nothing and moves no funds.";
 
-export type SupportedNetwork = "ARC" | "ARC_TESTNET";
+export type EvmNetwork = "ARC" | "ARC_TESTNET";
+export type XrplNetwork = "XRPL" | "XRPL_TESTNET";
+export type SupportedNetwork = EvmNetwork | XrplNetwork;
+
+/** Whether this network's proofs are XRPL-shaped rather than EVM-shaped. */
+export function isXrplNetwork(network: string): network is XrplNetwork {
+  return network === "XRPL" || network === "XRPL_TESTNET";
+}
 
 /**
  * The chain a proof is bound to.
@@ -52,6 +62,9 @@ export type SupportedNetwork = "ARC" | "ARC_TESTNET";
  * for one chain must not bind an address on another.
  */
 export function chainIdFor(network: SupportedNetwork): number {
+  // XRPL addresses are not chain-scoped the way an EVM address is; the network
+  // is named in the message instead, and this column is unused for them.
+  if (isXrplNetwork(network)) return 0;
   const configured = Number(process.env.ARC_CHAIN_ID ?? "5042");
   const chainId = Number.isInteger(configured) && configured > 0 ? configured : 5042;
   return network === "ARC_TESTNET" ? Number(process.env.ARC_TESTNET_CHAIN_ID ?? chainId) : chainId;
@@ -111,8 +124,12 @@ export async function issueChallenge(input: {
   const db = getDb();
   if (!db) return { ok: false, error: "No database is configured." };
 
-  const address = input.address.trim().toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(address)) {
+  // EVM addresses are checksummed inconsistently across tools, so one
+  // canonical case is stored. XRPL addresses are base58 and case-significant:
+  // lowercasing one destroys it.
+  const xrpl = isXrplNetwork(input.network);
+  const address = xrpl ? input.address.trim() : input.address.trim().toLowerCase();
+  if (!xrpl && !/^0x[0-9a-f]{40}$/.test(address)) {
     return { ok: false, error: "An Arc wallet address must be a 20-byte hex address." };
   }
 
@@ -134,7 +151,9 @@ export async function issueChallenge(input: {
     resource: `acor:agent:${input.agentId}`,
   };
 
-  const message = ownershipMessage(challengeFrom(row));
+  const message = xrpl
+    ? xrplOwnershipMessage({ ...row, network: input.network })
+    : ownershipMessage(challengeFrom(row));
   if (!message.ok) {
     return { ok: false, error: message.violations[0]?.message ?? "Could not build the message." };
   }
@@ -162,6 +181,17 @@ export type ProofResult =
   | { readonly ok: false; readonly code: string; readonly error: string };
 
 /**
+ * What answering a challenge takes.
+ *
+ * EVM proofs recover the signer's address from the signature alone. XRPL
+ * signatures do not carry a recovery parameter, so the public key comes with
+ * them — and the address is then *derived* from that key rather than believed.
+ */
+export type ProofMaterial =
+  | { readonly kind: "EVM"; readonly signature: string }
+  | { readonly kind: "XRPL"; readonly signature: string; readonly publicKey: string };
+
+/**
  * Check a proof and burn the challenge.
  *
  * Order matters. The challenge is claimed first, with a conditional update that
@@ -177,7 +207,7 @@ export async function consumeProof(input: {
   agentId: string;
   network: SupportedNetwork;
   nonce: string;
-  signature: string;
+  proof: ProofMaterial;
   now?: Date;
 }): Promise<ProofResult> {
   const db = getDb();
@@ -215,22 +245,40 @@ export async function consumeProof(input: {
     };
   }
 
-  const verified = verifyOwnershipProof(
-    challengeFrom({
-      domain: row.domain,
-      address: row.address,
-      statement: row.statement,
-      uri: row.uri,
-      chainId: row.chainId,
-      nonce: row.nonce,
-      issuedAt: row.issuedAt,
-      expiresAt: row.expiresAt,
-      resource: row.resource,
-    }),
-    input.signature,
-    keccak256,
-    now,
-  );
+  const verified =
+    input.proof.kind === "XRPL"
+      ? verifyXrplOwnershipProof(
+          {
+            domain: row.domain,
+            address: row.address,
+            statement: row.statement,
+            uri: row.uri,
+            network: row.network,
+            nonce: row.nonce,
+            issuedAt: row.issuedAt,
+            expiresAt: row.expiresAt,
+            resource: row.resource,
+          } satisfies XrplOwnershipChallenge,
+          input.proof.publicKey,
+          input.proof.signature,
+          now,
+        )
+      : verifyOwnershipProof(
+          challengeFrom({
+            domain: row.domain,
+            address: row.address,
+            statement: row.statement,
+            uri: row.uri,
+            chainId: row.chainId,
+            nonce: row.nonce,
+            issuedAt: row.issuedAt,
+            expiresAt: row.expiresAt,
+            resource: row.resource,
+          }),
+          input.proof.signature,
+          keccak256,
+          now,
+        );
 
   if (!verified.ok) {
     const first = verified.violations[0];

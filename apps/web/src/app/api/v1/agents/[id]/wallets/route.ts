@@ -29,7 +29,7 @@ import { newId } from "@acor/core";
 
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized } from "@/lib/api";
 import { recordAudit } from "@/lib/platform";
-import { consumeProof, type SupportedNetwork } from "@/lib/wallets/ownership";
+import { consumeProof, isXrplNetwork, type SupportedNetwork } from "@/lib/wallets/ownership";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +48,14 @@ const schema = z.object({
   /** The challenge answered, and the signature answering it. Required for `external`. */
   nonce: z.string().min(8).max(64).optional(),
   signature: z.string().min(4).max(256).optional(),
+  /**
+   * The signing key, for XRPL only.
+   *
+   * An EVM signature carries a recovery parameter, so the address falls out of
+   * the signature itself. An XRPL signature does not, so the key comes with it
+   * — and the address is derived from that key rather than believed.
+   */
+  publicKey: z.string().min(66).max(66).optional(),
 });
 
 async function ownsAgent(organizationId: string, agentId: string): Promise<boolean> {
@@ -133,6 +141,9 @@ export async function POST(
   // EVM addresses are checksummed inconsistently across tools, and the relay
   // compares them case-insensitively. Storing one canonical case keeps the
   // unique index meaningful.
+  // XRPL addresses are base58 and case-significant; lowercasing one destroys
+  // it. EVM addresses are checksummed inconsistently across tools and the relay
+  // compares them case-insensitively, so one canonical case is stored.
   const address = parsed.data.network.startsWith("ARC")
     ? parsed.data.address.trim().toLowerCase()
     : parsed.data.address.trim();
@@ -161,12 +172,29 @@ export async function POST(
       );
     }
 
+    if (isXrplNetwork(parsed.data.network) && !parsed.data.publicKey) {
+      return NextResponse.json(
+        {
+          error: "PROOF_REQUIRED",
+          message:
+            "An XRPL proof must include the signing public key: an XRPL signature carries no recovery parameter, so the account is derived from the key.",
+        },
+        { status: 400 },
+      );
+    }
+
     const proof = await consumeProof({
       organizationId: principal.organizationId,
       agentId: id,
       network: parsed.data.network as SupportedNetwork,
       nonce: parsed.data.nonce,
-      signature: parsed.data.signature,
+      proof: isXrplNetwork(parsed.data.network)
+        ? {
+            kind: "XRPL",
+            signature: parsed.data.signature,
+            publicKey: parsed.data.publicKey as string,
+          }
+        : { kind: "EVM", signature: parsed.data.signature },
     });
 
     if (!proof.ok) {
@@ -183,7 +211,10 @@ export async function POST(
 
     // The proof establishes an address. Binding a different one would make the
     // proof decorative.
-    if (proof.address !== address) {
+    // EVM comparison is case-insensitive because checksums vary between tools;
+    // XRPL base58 is exact.
+    const claimed = isXrplNetwork(parsed.data.network) ? address : address.toLowerCase();
+    if (proof.address !== claimed) {
       return NextResponse.json(
         {
           error: "SIGNER_MISMATCH",

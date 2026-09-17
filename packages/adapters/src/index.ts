@@ -15,6 +15,7 @@ export * from "./types";
 export * from "./config";
 export { ArcAdapter, keccak256 } from "./arc";
 export { XrplAdapter, decodeCurrency } from "./xrpl";
+export { verifyXrplOwnershipProof } from "./xrpl-ownership";
 export { CircleAdapter } from "./circle";
 export { KaleidoAdapter, BlockDagAdapter } from "./optional";
 
