@@ -13,7 +13,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { verifyCredential, type CredentialDocument } from "@acor/core";
+import {
+  credentialSigningBytes,
+  verifyCredential,
+  verifyMlDsa,
+  type CredentialDocument,
+} from "@acor/core";
 
 import { badRequest, readJson } from "@/lib/api";
 import { issuerState, revokedCredentialIds } from "@/lib/credentials";
@@ -26,6 +31,14 @@ const schema = z.object({
   signature: z.string().min(16).max(256),
   /** Optional: defaults to this deployment's published key. */
   issuerPublicKey: z.string().min(32).max(128).optional(),
+  /**
+   * Optional. See docs/POST_QUANTUM_READINESS.md. Checking it is purely
+   * additive to the required primary check above; omitting it does not
+   * change `valid`.
+   */
+  secondaryAttestation: z
+    .object({ algorithm: z.literal("ml-dsa-65"), publicKey: z.string(), signature: z.string() })
+    .optional(),
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -61,6 +74,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     revoked,
   );
 
+  const secondary = parsed.data.secondaryAttestation
+    ? {
+        algorithm: parsed.data.secondaryAttestation.algorithm,
+        publicKey: parsed.data.secondaryAttestation.publicKey,
+        valid: verifyMlDsa(
+          credentialSigningBytes(parsed.data.document as unknown as CredentialDocument),
+          parsed.data.secondaryAttestation.signature,
+          parsed.data.secondaryAttestation.publicKey,
+        ),
+      }
+    : null;
+
   return NextResponse.json({
     valid: result.valid,
     // Every reason at once: a holder fixing one problem should not discover
@@ -68,5 +93,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     reasons: result.reasons,
     digest: result.digest,
     checkedAgainst: { issuerPublicKey: publicKey, revocationCount: revoked.size },
+    // Reported separately from `valid` on purpose -- see the schema comment
+    // above. Absent when no secondary attestation was supplied to check.
+    secondaryAttestation: secondary,
   });
 }

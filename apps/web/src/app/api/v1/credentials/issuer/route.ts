@@ -34,6 +34,13 @@ export async function GET(): Promise<NextResponse> {
       algorithm: "Ed25519",
       publicKey: state.publicKey,
       statusListUri: state.statusListUri,
+      // See docs/POST_QUANTUM_READINESS.md. Additive only: a credential with
+      // no secondary attestation is exactly as valid as one that predates
+      // this field's existence, and this is never a claim that Ed25519
+      // itself has been made "quantum-safe".
+      secondaryAttestation: state.secondaryAttestationConfigured
+        ? { algorithm: "ML-DSA-65", standard: "FIPS 204", publicKey: state.secondaryPublicKey }
+        : null,
     },
     { headers: { "cache-control": "public, max-age=300" } },
   );

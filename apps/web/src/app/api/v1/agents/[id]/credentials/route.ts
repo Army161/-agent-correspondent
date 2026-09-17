@@ -75,6 +75,9 @@ export async function GET(
       // is exactly what a reader most needs to be told.
       valid: credential.valid,
       reasons: credential.reasons,
+      // Additive only: see docs/POST_QUANTUM_READINESS.md. Null on every
+      // credential issued without a configured secondary attestation key.
+      secondaryAttestation: credential.secondaryAttestation,
     })),
   });
 }

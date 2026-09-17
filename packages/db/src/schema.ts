@@ -555,6 +555,15 @@ export const agentCredentials = pgTable(
     signature: varchar("signature", { length: 256 }).notNull(),
     /** The issuing public key this was signed under, so a key rotation stays verifiable. */
     issuerPublicKey: varchar("issuer_public_key", { length: 128 }).notNull(),
+    /**
+     * An optional secondary attestation over the same bytes, using ML-DSA-65
+     * (FIPS 204). Purely additive -- see docs/POST_QUANTUM_READINESS.md. Null
+     * on every credential this deployment issues without a configured
+     * ML-DSA issuing key, which is exactly as valid as before this existed.
+     */
+    secondaryAlgorithm: varchar("secondary_algorithm", { length: 32 }),
+    secondaryPublicKey: text("secondary_public_key"),
+    secondarySignature: text("secondary_signature"),
     /** 0x-prefixed SHA-256, matching the hex convention used everywhere else here. */
     digest: varchar("digest", { length: 80 }).notNull(),
     issuedAt: timestamp("issued_at", { withTimezone: true, mode: "date" }).notNull(),

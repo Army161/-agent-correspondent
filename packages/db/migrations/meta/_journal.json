@@ -127,6 +127,20 @@
       "when": 1789643462389,
       "tag": "0017_square_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789644154611,
+      "tag": "0018_sleepy_exodus",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789644154613,
+      "tag": "0019_credential_guard_secondary",
+      "breakpoints": false
     }
   ]
 }

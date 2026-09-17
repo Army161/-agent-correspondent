@@ -37,6 +37,7 @@ export * from "./identity/verification";
 export * from "./credentials/index";
 export * from "./sentinel/index";
 export * from "./convoy/index";
+export * from "./pq/index";
 export {
   HALF_CURVE_ORDER,
   addressFromPublicKey,

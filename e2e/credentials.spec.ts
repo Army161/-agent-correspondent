@@ -174,6 +174,67 @@ test.describe("with a database", () => {
     expect(after.json.reasons).toContain("the credential has been revoked");
   });
 
+  test("a credential's optional ML-DSA secondary attestation verifies independently", async ({
+    page,
+  }) => {
+    await signUp(page);
+    const created = await api(page, "POST", "/api/v1/agents", {
+      name: "PQ mandated",
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
+    const agentId = created.json.agentId as string;
+
+    const issued = await api(page, "POST", `/api/v1/agents/${agentId}/credentials`, {
+      type: "MANDATE_BOUND",
+    });
+    if (issued.status !== 201) return;
+
+    const listed = await api(page, "GET", `/api/v1/agents/${agentId}/credentials`);
+    const credential = (listed.json.credentials as Record<string, unknown>[])[0]!;
+    const secondary = credential.secondaryAttestation as
+      | { algorithm: string; publicKey: string; signature: string; valid: boolean }
+      | null;
+
+    // Either no secondary key is configured on this deployment, or it is and
+    // it verifies -- this must never be issued and then found broken.
+    if (secondary === null) return;
+    expect(secondary.algorithm).toBe("ml-dsa-65");
+    expect(secondary.valid).toBe(true);
+
+    const verified = await api(page, "POST", "/api/v1/credentials/verify", {
+      document: issued.json.document,
+      signature: credential.signature,
+      secondaryAttestation: secondary,
+    });
+    expect(verified.json.valid).toBe(true);
+    expect((verified.json.secondaryAttestation as { valid: boolean }).valid).toBe(true);
+
+    // A missing secondary attestation is not a failure -- it is purely additive.
+    const withoutSecondary = await api(page, "POST", "/api/v1/credentials/verify", {
+      document: issued.json.document,
+      signature: credential.signature,
+    });
+    expect(withoutSecondary.json.valid).toBe(true);
+    expect(withoutSecondary.json.secondaryAttestation).toBeNull();
+  });
+
+  test("the published issuer identifies its algorithm by exact standard, never as a guarantee", async ({
+    request,
+  }) => {
+    const response = await request.get("/api/v1/credentials/issuer");
+    const body = (await response.json()) as {
+      configured: boolean;
+      secondaryAttestation: { algorithm: string; standard: string } | null;
+    };
+    if (!body.configured) return;
+    expect(body).not.toHaveProperty("quantumProof");
+    if (body.secondaryAttestation) {
+      expect(body.secondaryAttestation.algorithm).toBe("ML-DSA-65");
+      expect(body.secondaryAttestation.standard).toBe("FIPS 204");
+    }
+  });
+
   test("ATTACK: a tampered claim does not verify", async ({ page }) => {
     await signUp(page);
     const created = await api(page, "POST", "/api/v1/agents", {

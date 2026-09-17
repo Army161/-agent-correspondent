@@ -28,10 +28,14 @@ import {
 import {
   credentialDigest,
   credentialPublicKey,
+  credentialSigningBytes,
+  generateMlDsaKeypair,
   MAX_CREDENTIAL_LIFETIME_SECONDS,
   newId,
   signCredential,
+  signMlDsa,
   verifyCredential,
+  verifyMlDsa,
   type CredentialClaims,
   type CredentialDocument,
   type CredentialType,
@@ -45,6 +49,20 @@ function issuerKey(): string | null {
   return value && value.length > 0 ? value : null;
 }
 
+/**
+ * The optional ML-DSA-65 secondary attestation key.
+ *
+ * See docs/POST_QUANTUM_READINESS.md for what this is and is not. Configured
+ * as a seed (`generateMlDsaKeypair`'s input), not a raw secret key, so the
+ * deployment only ever has to hold one 32-byte value here rather than the
+ * much larger ML-DSA secret key -- the keypair is derived fresh each time
+ * this process starts.
+ */
+function secondaryAttestationSeed(): string | null {
+  const value = process.env.CREDENTIAL_ISSUER_MLDSA_SEED?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
 export interface IssuerState {
   readonly configured: boolean;
   /** The public half, so a verifier can check what we signed. */
@@ -52,19 +70,28 @@ export interface IssuerState {
   readonly issuer: string;
   readonly statusListUri: string;
   readonly requires: readonly string[];
+  /** Whether a secondary ML-DSA-65 attestation will be attached to new credentials. */
+  readonly secondaryAttestationConfigured: boolean;
+  readonly secondaryPublicKey: string | null;
 }
 
-/** What this deployment can issue, and under which key. */
+/** What this deployment can issue, and under which key(s). */
 export function issuerState(): IssuerState {
   const base = SITE_URL.replace(/\/$/, "");
   const key = issuerKey();
   const publicKey = key ? credentialPublicKey(key) : null;
+
+  const seed = secondaryAttestationSeed();
+  const secondary = seed ? generateMlDsaKeypair(seed) : null;
+
   return {
     configured: Boolean(publicKey?.ok),
     publicKey: publicKey?.ok ? publicKey.value : null,
     issuer: `${base}/credentials`,
     statusListUri: `${base}/api/v1/credentials/revoked`,
     requires: ["CREDENTIAL_ISSUER_KEY"],
+    secondaryAttestationConfigured: Boolean(secondary?.ok),
+    secondaryPublicKey: secondary?.ok ? secondary.value.publicKey : null,
   };
 }
 
@@ -215,6 +242,27 @@ export async function issueCredential(
     return { ok: false, error: signature.violations[0]?.message ?? "Could not sign." };
   }
 
+  // The optional secondary attestation, over the identical bytes the primary
+  // signature covers. Purely additive: a missing or failing secondary key
+  // never blocks issuance of the (already required) primary signature.
+  let secondaryAlgorithm: string | null = null;
+  let secondaryPublicKey: string | null = null;
+  let secondarySignature: string | null = null;
+  const seed = secondaryAttestationSeed();
+  if (seed) {
+    const keys = generateMlDsaKeypair(seed);
+    if (keys.ok) {
+      const attestation = signMlDsa(credentialSigningBytes(document), keys.value.secretKey);
+      if (attestation.ok) {
+        secondaryAlgorithm = "ml-dsa-65";
+        secondaryPublicKey = keys.value.publicKey;
+        secondarySignature = attestation.value;
+      } else {
+        console.error("[credentials] secondary attestation not produced:", attestation.violations);
+      }
+    }
+  }
+
   try {
     await db.insert(agentCredentials).values({
       id: newId("cred"),
@@ -225,6 +273,9 @@ export async function issueCredential(
       document: document as unknown as Record<string, unknown>,
       signature: signature.value,
       issuerPublicKey: state.publicKey as string,
+      secondaryAlgorithm,
+      secondaryPublicKey,
+      secondarySignature,
       digest: credentialDigest(document),
       issuedAt: new Date(document.issuedAt),
       expiresAt: new Date(document.expiresAt),
@@ -280,6 +331,21 @@ export async function revokedCredentialIds(): Promise<readonly string[]> {
   }
 }
 
+export interface SecondaryAttestationStatus {
+  readonly algorithm: string;
+  readonly publicKey: string;
+  /** The raw signature, so an external verifier can check it independently
+   *  rather than trusting this server's own `valid` field. */
+  readonly signature: string;
+  /**
+   * Whether this attestation verifies, as checked here. Reported separately
+   * from the credential's overall `valid`: the secondary attestation is
+   * additive, so its own failure is worth surfacing but must never be
+   * conflated with the primary (required, classical) signature's validity.
+   */
+  readonly valid: boolean;
+}
+
 export interface StoredCredential {
   readonly credentialId: string;
   readonly type: string;
@@ -291,6 +357,8 @@ export interface StoredCredential {
   readonly revokedAt: Date | null;
   readonly valid: boolean;
   readonly reasons: readonly string[];
+  /** Null when this credential carries no secondary attestation. */
+  readonly secondaryAttestation: SecondaryAttestationStatus | null;
 }
 
 /** The credentials held by one agent, each re-verified as it is read. */
@@ -327,6 +395,21 @@ export async function credentialsForAgent(
       now,
       revoked,
     );
+
+    const secondaryAttestation: SecondaryAttestationStatus | null =
+      row.secondaryAlgorithm && row.secondaryPublicKey && row.secondarySignature
+        ? {
+            algorithm: row.secondaryAlgorithm,
+            publicKey: row.secondaryPublicKey,
+            signature: row.secondarySignature,
+            valid: verifyMlDsa(
+              credentialSigningBytes(document),
+              row.secondarySignature,
+              row.secondaryPublicKey,
+            ),
+          }
+        : null;
+
     return {
       credentialId: row.credentialId,
       type: row.type,
@@ -338,6 +421,7 @@ export async function credentialsForAgent(
       revokedAt: row.revokedAt,
       valid: result.valid,
       reasons: result.reasons,
+      secondaryAttestation,
     };
   });
 }
