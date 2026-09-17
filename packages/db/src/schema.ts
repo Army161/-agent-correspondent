@@ -352,6 +352,53 @@ export const onboardingProgress = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Credentials
+// ---------------------------------------------------------------------------
+
+/**
+ * Credentials this platform has issued about an agent.
+ *
+ * Append-only in spirit and by trigger: the signed document and its signature
+ * are frozen once written, because a credential someone else is holding cannot
+ * be edited after the fact. Revocation is the only thing that moves, and it
+ * moves one way.
+ */
+export const agentCredentials = pgTable(
+  "agent_credentials",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: id("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    /** The credential id inside the signed document, and what a revocation names. */
+    credentialId: varchar("credential_id", { length: 128 }).notNull(),
+    type: varchar("type", { length: 64 }).notNull(),
+    /** The signed document, verbatim. Re-serialising it would break the signature. */
+    document: jsonb("document").notNull(),
+    /** Ed25519, hex. Public by nature. */
+    signature: varchar("signature", { length: 256 }).notNull(),
+    /** The issuing public key this was signed under, so a key rotation stays verifiable. */
+    issuerPublicKey: varchar("issuer_public_key", { length: 128 }).notNull(),
+    /** 0x-prefixed SHA-256, matching the hex convention used everywhere else here. */
+    digest: varchar("digest", { length: 80 }).notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true, mode: "date" }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+    /** A short machine-readable reason. Never free text about a person. */
+    revocationReason: varchar("revocation_reason", { length: 64 }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("agent_credentials_credential_id_unique").on(table.credentialId),
+    index("agent_credentials_agent_idx").on(table.agentId),
+    index("agent_credentials_org_idx").on(table.organizationId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
 // Identity verification
 // ---------------------------------------------------------------------------
 

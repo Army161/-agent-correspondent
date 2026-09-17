@@ -18,6 +18,7 @@ export type IdPrefix =
   | "org"
   | "user"
   | "onb"
+  | "cred"
   | "sub"
   | "bill"
   | "mandate";
