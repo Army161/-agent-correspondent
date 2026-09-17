@@ -37,6 +37,8 @@ function request(overrides: Partial<SentinelRequest> = {}): SentinelRequest {
       requiresFresh: false,
     },
     authorization: {
+      killSwitchEngaged: false,
+      killSwitchReason: null,
       ownsResource: true,
       planPermits: true,
       verified: true,
@@ -98,10 +100,30 @@ describe("ordering", () => {
 });
 
 describe("authorization", () => {
+  it("denies on a kill switch before it ever asks about ownership", () => {
+    const decision = evaluateSentinel(
+      request({
+        authorization: {
+          killSwitchEngaged: true,
+          killSwitchReason: "Agent paused pending review.",
+          ownsResource: false,
+          planPermits: false,
+          verified: false,
+          verificationRemedy: null,
+        },
+      }),
+    );
+    expect(decision.outcome).toBe("DENY");
+    expect(decision.code).toBe("KILL_SWITCH_ENGAGED");
+    expect(decision.message).toBe("Agent paused pending review.");
+  });
+
   it("answers a foreign resource exactly as it answers a missing one", () => {
     const decision = evaluateSentinel(
       request({
         authorization: {
+          killSwitchEngaged: false,
+          killSwitchReason: null,
           ownsResource: false,
           planPermits: true,
           verified: true,
@@ -120,6 +142,8 @@ describe("authorization", () => {
       evaluateSentinel(
         request({
           authorization: {
+            killSwitchEngaged: false,
+            killSwitchReason: null,
             ownsResource: true,
             planPermits: false,
             verified: true,
@@ -132,6 +156,8 @@ describe("authorization", () => {
     const decision = evaluateSentinel(
       request({
         authorization: {
+          killSwitchEngaged: false,
+          killSwitchReason: null,
           ownsResource: true,
           planPermits: true,
           verified: false,

@@ -79,6 +79,10 @@ export interface IdentityFacts {
 }
 
 export interface AuthorizationFacts {
+  /** A kill switch covering this request — global, the rail, the agent, or the wallet — is engaged. */
+  readonly killSwitchEngaged: boolean;
+  /** Why, when it is. */
+  readonly killSwitchReason: string | null;
   /** The resource belongs to the caller's organization. */
   readonly ownsResource: boolean;
   /** The plan permits this action. */
@@ -198,6 +202,17 @@ function identityLayer(facts: IdentityFacts): LayerResult {
 }
 
 function authorizationLayer(facts: AuthorizationFacts): LayerResult {
+  // Checked first and separately from ownership: a killed agent, rail or
+  // deployment is refused identically whether or not the caller owns the
+  // resource, and containment must never depend on that question first.
+  if (facts.killSwitchEngaged) {
+    return {
+      layer: "AUTHORIZATION",
+      outcome: "DENY",
+      code: "KILL_SWITCH_ENGAGED",
+      message: facts.killSwitchReason ?? "This action is currently suspended.",
+    };
+  }
   if (!facts.ownsResource) {
     // Deliberately the same answer a missing resource gets, so this cannot be
     // used to discover what exists in another organization.

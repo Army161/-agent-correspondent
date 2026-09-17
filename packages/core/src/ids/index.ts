@@ -19,6 +19,9 @@ export type IdPrefix =
   | "user"
   | "onb"
   | "cred"
+  | "sec"
+  | "inc"
+  | "kill"
   | "sub"
   | "bill"
   | "mandate";

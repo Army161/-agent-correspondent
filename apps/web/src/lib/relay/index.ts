@@ -45,6 +45,7 @@ import {
 import { keccak256 } from "@acor/adapters";
 
 import { createRelayStores } from "./stores";
+import { anyKillSwitchEngaged, walletKillSwitchKey } from "../security/kill-switches";
 
 export interface RelayContext {
   readonly organizationId: string;
@@ -67,7 +68,7 @@ async function authorizeSigner(
   const db = getDb();
   if (!db) return false;
   const rows = await db
-    .select({ address: agentWallets.address })
+    .select({ address: agentWallets.address, network: agentWallets.network })
     .from(agentWallets)
     .innerJoin(agents, eq(agents.id, agentWallets.agentId))
     .where(
@@ -79,7 +80,17 @@ async function authorizeSigner(
       ),
     );
   const normalized = signer.trim().toLowerCase();
-  return rows.some((row) => row.address.trim().toLowerCase() === normalized);
+  const bound = rows.find((row) => row.address.trim().toLowerCase() === normalized);
+  if (!bound) return false;
+
+  // A specific wallet can be frozen without disabling the whole agent —
+  // the per-wallet execution freeze. Checked last, after ownership, so an
+  // attacker signing with an address that was never bound gets the same
+  // plain "not authorized" either way.
+  const frozen = await anyKillSwitchEngaged({
+    walletKey: walletKillSwitchKey(buyerAgentId, bound.network, bound.address),
+  });
+  return !frozen.engaged;
 }
 
 async function loadMandate(agentId: string): Promise<EconomicMandate | null> {
@@ -228,6 +239,15 @@ async function lookupProvider(
       );
     const primary = wallets.find((wallet) => wallet.isPrimary) ?? wallets[0];
     if (!primary) return null; // no proved payout address on this network
+
+    // A frozen payout wallet is not payable, exactly like one that was never
+    // configured — freezing it must not read as "resolve some other wallet
+    // instead", only as "not payable right now".
+    const frozen = await anyKillSwitchEngaged({
+      walletKey: walletKillSwitchKey(agentId, intent.network, primary.address),
+    });
+    if (frozen.engaged) return null;
+
     destination = primary.address;
   }
 

@@ -19,6 +19,8 @@ import { parseIntent } from "@acor/core";
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized, violations } from "@/lib/api";
 import { canAuthorizeOn } from "@/lib/identity/gates";
 import { createRelay } from "@/lib/relay";
+import { preCheckIntent } from "@/lib/security/evaluate";
+import { openIncident } from "@/lib/security/incidents";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,16 +54,78 @@ export async function POST(request: Request): Promise<NextResponse> {
   // value actually moves, an unverified organization is refused here — cheaper
   // than the relay's checks, and a clearer answer for the caller.
   const gate = await canAuthorizeOn(principal.organizationId, intent.value.network);
-  if (!gate.allowed) {
+
+  // Sentinel-5: a kill switch (global, this rail, or this agent) and the
+  // account's own behavioural history, checked before the relay is touched
+  // at all. A held or denied request here burns no nonce and leaves no
+  // intent in the relay's store — see lib/security/evaluate.ts for why
+  // mandate and bounds are not re-checked here.
+  const sentinel = await preCheckIntent({
+    organizationId: principal.organizationId,
+    intent: intent.value,
+    principalKind: principal.kind,
+    verified: gate.allowed,
+    verificationRemedy: gate.reason,
+  });
+
+  if (sentinel.decision.outcome === "DENY") {
     return NextResponse.json(
-      { accepted: false, error: "VERIFICATION_REQUIRED", message: gate.reason },
-      { status: 403 },
+      {
+        accepted: false,
+        error: sentinel.decision.code ?? "DENIED",
+        message: sentinel.decision.message,
+        incidentId: sentinel.incidentId,
+      },
+      { status: sentinel.decision.code === "KILL_SWITCH_ENGAGED" ? 503 : 403 },
+    );
+  }
+  if (sentinel.decision.outcome === "HOLD") {
+    return NextResponse.json(
+      {
+        accepted: false,
+        held: true,
+        error: sentinel.decision.code ?? "HELD_FOR_REVIEW",
+        message: sentinel.decision.message,
+        incidentId: sentinel.incidentId,
+      },
+      { status: 202 },
     );
   }
 
   const result = await relay.submit(intent.value, parsed.data.signature, parsed.data.signer);
 
   if (!result.accepted) {
+    // The relay itself is the authority on mandate and bounds, and a denial
+    // whose code looks like an active attempt to forge or redirect an
+    // authorization — not a routine "over budget" — is worth the same
+    // evidence trail as a Sentinel-5 hold. Everything else (a mandate limit,
+    // an expired intent) is normal traffic and is not incident-worthy.
+    const attackShaped = new Set([
+      "SIGNATURE_INVALID",
+      "SIGNER_MISMATCH",
+      "DESTINATION_SUBSTITUTION",
+      "ASSET_SUBSTITUTION",
+      "NETWORK_SUBSTITUTION",
+      "NONCE_REUSED",
+      "DOMAIN_MISMATCH",
+      "CHAIN_MISMATCH",
+      "CONTRACT_MISMATCH",
+    ]);
+    const firstCode = result.violations[0]?.code;
+    if (firstCode && attackShaped.has(firstCode)) {
+      await openIncident({
+        organizationId: principal.organizationId,
+        decision: {
+          outcome: "DENY",
+          layers: [],
+          decidedBy: "BOUNDS",
+          code: firstCode,
+          message: result.violations[0]?.message ?? null,
+        },
+        summary: `Relay refused intent submission for agent ${intent.value.buyerAgentId} on ${firstCode}: this is the shape of a forged or redirected authorization attempt, not a routine limit.`,
+      });
+    }
+
     return NextResponse.json(
       {
         accepted: false,

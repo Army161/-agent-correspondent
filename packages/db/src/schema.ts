@@ -352,6 +352,125 @@ export const onboardingProgress = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Sentinel-5 security control plane
+// ---------------------------------------------------------------------------
+
+export const killSwitchScopeEnum = pgEnum("kill_switch_scope", [
+  "GLOBAL",
+  "RAIL",
+  "AGENT",
+  "WALLET",
+  "PROVIDER",
+]);
+
+export const killSwitchActionEnum = pgEnum("kill_switch_action", ["ENGAGE", "DISENGAGE"]);
+
+/**
+ * The kill switch, as a log of engage/disengage events rather than a mutable
+ * flag.
+ *
+ * Current state for a (scope, target) pair is derived by reading the most
+ * recent event — never stored redundantly, so there is exactly one place this
+ * can disagree with itself. Containment is reversible by construction: engaging
+ * writes a row, disengaging writes another, and both are permanent history.
+ *
+ * `target` is null only for GLOBAL. For RAIL it is a network id (`ARC`,
+ * `XRPL`, …); for AGENT an agent id; for WALLET an `agentId:network:address`
+ * key; for PROVIDER a capability-engine provider id.
+ */
+export const killSwitchEvents = pgTable(
+  "kill_switch_events",
+  {
+    id: id().primaryKey(),
+    /** Null for a platform-wide (GLOBAL, or cross-tenant PROVIDER/RAIL) event. */
+    organizationId: id("organization_id"),
+    scope: killSwitchScopeEnum("scope").notNull(),
+    target: varchar("target", { length: 256 }),
+    action: killSwitchActionEnum("action").notNull(),
+    reason: text("reason").notNull(),
+    /** The user who engaged or disengaged it. A model can never be the author. */
+    actorUserId: id("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** Free-form actor label for system-initiated events (e.g. `sentinel:auto`). */
+    actor: varchar("actor", { length: 128 }).notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("kill_switch_events_scope_target_idx").on(table.scope, table.target),
+    index("kill_switch_events_org_idx").on(table.organizationId),
+  ],
+);
+
+export const incidentSeverityEnum = pgEnum("incident_severity", [
+  "LOW",
+  "MEDIUM",
+  "HIGH",
+  "CRITICAL",
+]);
+export const incidentStatusEnum = pgEnum("incident_status", ["OPEN", "CONTAINED", "RESOLVED"]);
+
+/**
+ * A security incident, opened automatically when Sentinel-5 holds or denies,
+ * or manually by an operator.
+ *
+ * `evidence` is the full SentinelDecision — every layer, in order — frozen at
+ * creation. `status` moves forward only: OPEN -> CONTAINED -> RESOLVED, never
+ * back, enforced by trigger alongside the rest of the freeze.
+ */
+export const securityIncidents = pgTable(
+  "security_incidents",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id"),
+    severity: incidentSeverityEnum("severity").notNull(),
+    /** The Sentinel-5 layer or sensor that raised it, e.g. `ANOMALY`. */
+    category: varchar("category", { length: 64 }).notNull(),
+    /** The stable code from the layer result, e.g. `SPEND_SPIKE`. */
+    code: varchar("code", { length: 64 }).notNull(),
+    summary: text("summary").notNull(),
+    /** The full decision, frozen. What happened, and why, exactly as evaluated. */
+    evidence: jsonb("evidence").notNull(),
+    /** What containment this incident triggered, if any (kill switches engaged). */
+    containmentActions: jsonb("containment_actions"),
+    status: incidentStatusEnum("status").notNull().default("OPEN"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+    resolvedByUserId: id("resolved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolutionNote: text("resolution_note"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("security_incidents_org_idx").on(table.organizationId),
+    index("security_incidents_status_idx").on(table.status),
+  ],
+);
+
+/**
+ * Quarantined external providers and integrations.
+ *
+ * Separate from the kill switch: a kill switch stops *this deployment* from
+ * acting; quarantine additionally marks a provider (a settlement adapter, a
+ * capability id) as untrustworthy so the capability manifest reports it
+ * honestly rather than silently.
+ */
+export const providerQuarantines = pgTable(
+  "provider_quarantines",
+  {
+    id: id().primaryKey(),
+    /** e.g. `arc`, `xrpl`, `circle`, or a specific capability id. */
+    providerId: varchar("provider_id", { length: 96 }).notNull(),
+    reason: text("reason").notNull(),
+    actorUserId: id("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    actor: varchar("actor", { length: 128 }).notNull(),
+    quarantinedAt: timestamp("quarantined_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    liftedAt: timestamp("lifted_at", { withTimezone: true, mode: "date" }),
+  },
+  (table) => [uniqueIndex("provider_quarantines_provider_unique").on(table.providerId)],
+);
+
+// ---------------------------------------------------------------------------
 // Credentials
 // ---------------------------------------------------------------------------
 
