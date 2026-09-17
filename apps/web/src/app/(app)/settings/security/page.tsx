@@ -8,6 +8,7 @@ import { TwoFactor } from "@/components/account/two-factor";
 import { PageHeader } from "@/components/shell/page-header";
 import { Badge, Panel, PanelHeader } from "@/components/ui/primitives";
 import { currentUser, getAuth, STEP_UP_WINDOW_SECONDS } from "@/lib/auth";
+import { requireVerification, verificationProvider } from "@/lib/identity";
 import { emailConfigured } from "@/lib/email";
 import { headers } from "next/headers";
 
@@ -24,6 +25,9 @@ export default async function AccountSecurityPage(): Promise<React.JSX.Element> 
 
   // Read on the server so the lists are correct on first paint, and so a
   // browser that never runs the client code still sees the truth.
+  const verification = await requireVerification(user.organizationId, "LIVE_SETTLEMENT");
+  const provider = verificationProvider();
+
   const auth = getAuth();
   const requestHeaders = await headers();
   const [passkeys, sessions] = await Promise.all([
@@ -101,6 +105,31 @@ export default async function AccountSecurityPage(): Promise<React.JSX.Element> 
               userAgent: row.userAgent ?? null,
             }))}
           />
+        </Panel>
+
+        <Panel className="lg:col-span-2">
+          <PanelHeader
+            title="Identity verification"
+            description="Required before this organization can authorize a payment on a network where value actually moves. The μLedger and testnets do not need it."
+          />
+          <div className="flex flex-wrap items-center gap-3 px-5 py-4">
+            <Badge tone={verification.allowed ? "success" : "warning"}>
+              {verification.status}
+            </Badge>
+            <span className="text-[13px] text-[var(--color-muted)]">
+              {verification.allowed
+                ? `Verified to ${verification.effectiveLevel.toLowerCase()} level.`
+                : verification.remedy}
+            </span>
+          </div>
+          {provider.configured ? null : (
+            <p className="px-5 pb-4 text-[11px] leading-relaxed text-[var(--color-subtle)]">
+              No verification provider is configured on this deployment
+              ({provider.requires.join(", ")}). There is deliberately no manual approval path: a
+              manual approval path is the first thing an attacker with a database connection
+              reaches for.
+            </p>
+          )}
         </Panel>
 
         <Panel className="lg:col-span-2 p-5">

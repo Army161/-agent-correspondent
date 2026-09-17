@@ -352,6 +352,66 @@ export const onboardingProgress = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Identity verification
+// ---------------------------------------------------------------------------
+
+export const verificationLevelEnum = pgEnum("verification_level", [
+  "NONE",
+  "INDIVIDUAL",
+  "BUSINESS",
+]);
+
+export const verificationStatusEnum = pgEnum("verification_status", [
+  "NOT_STARTED",
+  "PENDING",
+  "IN_REVIEW",
+  "APPROVED",
+  "REJECTED",
+  "EXPIRED",
+]);
+
+/**
+ * What a provider established about who is behind an organization.
+ *
+ * There is no column here for a document, and that is the design. A passport
+ * scan is the most damaging thing a breach could hand over; the way not to lose
+ * it is never to hold it. What is stored is a level, a status, the provider's
+ * own reference, and a digest of what it told us — enough to settle a later
+ * dispute about whether this record was altered, and nothing more.
+ *
+ * Written only by the provider adapter, never from a request body. A client
+ * that could post its own verification status would make the whole thing
+ * decorative.
+ */
+export const identityVerifications = pgTable(
+  "identity_verifications",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** The adapter that produced this. `manual` is not one of them. */
+    provider: varchar("provider", { length: 64 }).notNull(),
+    /** The provider's identifier for the case, for support and reconciliation. */
+    providerReference: varchar("provider_reference", { length: 128 }),
+    level: verificationLevelEnum("level").notNull().default("NONE"),
+    status: verificationStatusEnum("status").notNull().default("NOT_STARTED"),
+    /** The provider's own status string, kept verbatim. */
+    providerStatus: varchar("provider_status", { length: 64 }),
+    decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
+    /** When this approval stops counting. Null means it does not expire. */
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+    /** SHA-256 of the provider payload. A digest, never the payload. */
+    evidenceDigest: varchar("evidence_digest", { length: 64 }),
+    /** A provider's machine-readable reason, when it declined. Never free text about a person. */
+    rejectionCode: varchar("rejection_code", { length: 64 }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("identity_verifications_org_unique").on(table.organizationId)],
+);
+
+// ---------------------------------------------------------------------------
 // Billing
 // ---------------------------------------------------------------------------
 

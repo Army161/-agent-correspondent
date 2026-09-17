@@ -17,6 +17,7 @@ import { z } from "zod";
 import { parseIntent } from "@acor/core";
 
 import { authenticateRequest, badRequest, notConnected, readJson, unauthorized, violations } from "@/lib/api";
+import { canAuthorizeOn } from "@/lib/identity/gates";
 import { createRelay } from "@/lib/relay";
 
 export const runtime = "nodejs";
@@ -46,6 +47,17 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const intent = parseIntent(parsed.data.intent);
   if (!intent.ok) return violations(intent.violations);
+
+  // Who is behind the account, before what the intent says. On a network where
+  // value actually moves, an unverified organization is refused here — cheaper
+  // than the relay's checks, and a clearer answer for the caller.
+  const gate = await canAuthorizeOn(principal.organizationId, intent.value.network);
+  if (!gate.allowed) {
+    return NextResponse.json(
+      { accepted: false, error: "VERIFICATION_REQUIRED", message: gate.reason },
+      { status: 403 },
+    );
+  }
 
   const result = await relay.submit(intent.value, parsed.data.signature, parsed.data.signer);
 

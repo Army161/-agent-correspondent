@@ -33,6 +33,7 @@ export * from "./receipts/index";
 export * from "./reputation/index";
 export * from "./jobs/lifecycle";
 export * from "./onboarding/index";
+export * from "./identity/verification";
 export {
   HALF_CURVE_ORDER,
   addressFromPublicKey,
