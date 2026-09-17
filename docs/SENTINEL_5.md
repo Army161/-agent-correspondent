@@ -253,6 +253,17 @@ security-relevant action in the product.
   configured in this deployment, so this has not been exercised beyond unit
   and e2e coverage.
 
+## Fixing a finding in this repository
+
+Distinct from containing a live incident against a deployed instance: when a
+security finding is about this *codebase* (a dependency vulnerability, a bug
+in one of the controls above), the fix is committed to the designated
+development branch, tested, and pushed for human review — never merged or
+deployed automatically. No tool in this repository, and no capability
+described anywhere in this document, opens or merges a pull request, or
+deploys anything. That is a property of how this session operates throughout,
+not a feature specific to Sentinel-5.
+
 ## Verification
 
 `packages/core/test/sentinel.test.ts` — 17 tests: the ordering guarantee (a
