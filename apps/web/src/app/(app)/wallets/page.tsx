@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { ConnectWallet } from "@/components/wallets/connect";
 import { DataState } from "@/components/shell/data-state";
 import { PageHeader } from "@/components/shell/page-header";
 import {
@@ -13,7 +14,7 @@ import {
 import { probeAll } from "@acor/adapters";
 import { currentUser } from "@/lib/auth";
 import { AWAITING, NO_VALUATION, truncateMiddle, usdDisplay } from "@/lib/format";
-import { getLedgerTotals, listWallets } from "@/lib/platform";
+import { getLedgerTotals, listAgents, listWallets } from "@/lib/platform";
 
 export const metadata: Metadata = {
   title: "Wallets",
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 export default async function WalletsPage(): Promise<React.JSX.Element> {
   const user = await currentUser();
-  const [wallets, totals, adapters] = await Promise.all([
+  const [wallets, totals, adapters, agentsView] = await Promise.all([
     user
       ? listWallets(user.organizationId)
       : Promise.resolve({ state: "NOT_CONNECTED", reason: "Sign in to see wallets." } as const),
@@ -32,9 +33,21 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
       ? getLedgerTotals(user.organizationId)
       : Promise.resolve({ state: "NOT_CONNECTED", reason: "Sign in to see balances." } as const),
     probeAll(),
+    user
+      ? listAgents(user.organizationId)
+      : Promise.resolve({ state: "NOT_CONNECTED", reason: "Sign in to see agents." } as const),
   ]);
 
   const anyRailReady = adapters.some((adapter) => adapter.status === "READY");
+  const connectable =
+    agentsView.state === "READY"
+      ? agentsView.data.map((agent) => ({ id: agent.id, name: agent.name }))
+      : [];
+
+  // WalletConnect needs a project id from Reown. Without one, the only wallet
+  // this page can reach is one injected into the browser — and it says so
+  // rather than showing a button that cannot work.
+  const walletConnectAvailable = Boolean(process.env.NEXT_PUBLIC_REOWN_PROJECT_ID?.trim());
 
   return (
     <>
@@ -83,6 +96,24 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
           </div>
         </Panel>
 
+        <Panel className="lg:col-span-3">
+          <PanelHeader
+            title="Connect a wallet"
+            description="Binding requires a signature proving control of the address. An address typed into a form is a claim, and a claim is not a payout destination."
+          />
+          {user ? (
+            <ConnectWallet
+              agents={connectable}
+              networks={["ARC", "ARC_TESTNET"]}
+              walletConnectAvailable={walletConnectAvailable}
+            />
+          ) : (
+            <p className="px-5 py-4 text-[13px] text-[var(--color-muted)]">
+              Sign in to bind a wallet.
+            </p>
+          )}
+        </Panel>
+
         <Panel className="lg:col-span-2">
           <PanelHeader
             title="Bound wallets"
@@ -109,6 +140,9 @@ export default async function WalletsPage(): Promise<React.JSX.Element> {
                   <div className="flex items-center gap-2">
                     <Badge tone="neutral">{wallet.network}</Badge>
                     <Badge tone="neutral">{wallet.custody}</Badge>
+                    <Badge tone={wallet.verifiedAt ? "success" : "warning"}>
+                      {wallet.verifiedAt ? "VERIFIED" : "UNVERIFIED"}
+                    </Badge>
                   </div>
                 </li>
               ))}

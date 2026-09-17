@@ -24,6 +24,7 @@ import {
   getDb,
   gte,
   inArray,
+  isNotNull,
   muledgerEntries,
   sql,
   transactions,
@@ -52,9 +53,11 @@ export interface RelayContext {
 /**
  * Which wallets may commit an agent's money.
  *
- * Ownership is a bound wallet on the agent, in the caller's organization. A
- * valid signature from an unbound wallet proves someone signed; it does not
- * make them entitled to this agent's balance.
+ * Ownership is a *verified* bound wallet on the agent, in the caller's
+ * organization. A valid signature from an unbound wallet proves someone
+ * signed; it does not make them entitled to this agent's balance. And a
+ * binding without a proof of control is a claim someone typed into a form,
+ * which is no better.
  */
 async function authorizeSigner(
   organizationId: string,
@@ -72,6 +75,7 @@ async function authorizeSigner(
         eq(agentWallets.agentId, buyerAgentId),
         eq(agents.organizationId, organizationId),
         eq(agents.status, "ACTIVE"),
+        isNotNull(agentWallets.verifiedAt),
       ),
     );
   const normalized = signer.trim().toLowerCase();
@@ -207,17 +211,23 @@ async function lookupProvider(
 
   // On the μLedger nothing moves on a chain, so the payee is the agent itself.
   // On every other network the payout must go to a wallet bound for *that*
-  // network — an Arc address cannot receive an XRPL payment.
+  // network — an Arc address cannot receive an XRPL payment — and one whose
+  // control has been proved. Paying an unproved address is how money reaches
+  // someone who merely claimed it.
   let destination = row.id;
   if (intent.network !== "MULEDGER") {
     const wallets = await db
       .select({ address: agentWallets.address, isPrimary: agentWallets.isPrimary })
       .from(agentWallets)
       .where(
-        and(eq(agentWallets.agentId, agentId), eq(agentWallets.network, intent.network)),
+        and(
+          eq(agentWallets.agentId, agentId),
+          eq(agentWallets.network, intent.network),
+          isNotNull(agentWallets.verifiedAt),
+        ),
       );
     const primary = wallets.find((wallet) => wallet.isPrimary) ?? wallets[0];
-    if (!primary) return null; // no payout address on this network: not payable
+    if (!primary) return null; // no proved payout address on this network
     destination = primary.address;
   }
 

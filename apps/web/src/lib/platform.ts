@@ -448,6 +448,14 @@ export interface WalletRow {
   readonly network: string;
   readonly address: string;
   readonly custody: string;
+  /**
+   * When control of the address was proved.
+   *
+   * Null means the binding is a claim. Surfaced rather than hidden: an
+   * unverified wallet is not a signer and not a payout destination, and the
+   * page should say so rather than list it next to proved ones.
+   */
+  readonly verifiedAt: Date | null;
 }
 
 export async function listWallets(organizationId: string): Promise<DataView<WalletRow[]>> {
@@ -459,6 +467,7 @@ export async function listWallets(organizationId: string): Promise<DataView<Wall
         network: agentWallets.network,
         address: agentWallets.address,
         custody: agentWallets.custody,
+        verifiedAt: agentWallets.verifiedAt,
       })
       .from(agentWallets)
       .innerJoin(agents, eq(agents.id, agentWallets.agentId))

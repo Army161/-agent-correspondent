@@ -33,3 +33,10 @@ export * from "./receipts/index";
 export * from "./reputation/index";
 export * from "./jobs/lifecycle";
 export * from "./onboarding/index";
+export {
+  HALF_CURVE_ORDER,
+  addressFromPublicKey,
+  hexToBytes,
+  recoverAddress,
+} from "./crypto/ecdsa";
+export * from "./wallet/ownership";

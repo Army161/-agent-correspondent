@@ -68,7 +68,12 @@ export type EconomicErrorCode =
   | "INSUFFICIENT_INVENTORY"
   | "AUCTION_COMMIT_MISMATCH"
   // job lifecycle
-  | "ILLEGAL_JOB_TRANSITION";
+  | "ILLEGAL_JOB_TRANSITION"
+  // wallet ownership
+  | "CHALLENGE_MALFORMED"
+  | "CHALLENGE_EXPIRED"
+  | "CHALLENGE_UNKNOWN"
+  | "CHALLENGE_CONSUMED";
 
 export interface EconomicViolation {
   readonly code: EconomicErrorCode;

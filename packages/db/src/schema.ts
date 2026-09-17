@@ -506,9 +506,59 @@ export const agentWallets = pgTable(
     /** Opaque reference into the custody provider, e.g. a Circle wallet id. */
     externalRef: varchar("external_ref", { length: 128 }),
     isPrimary: boolean("is_primary").notNull().default(false),
+    /**
+     * When control of this address was proved, and by which challenge.
+     *
+     * Null means the binding is a claim, not a fact. An unverified wallet is
+     * never a signer and never a payout destination — an address typed into a
+     * form proves nothing about who holds the key.
+     */
+    verifiedAt: timestamp("verified_at", { withTimezone: true, mode: "date" }),
+    /** The challenge that was answered. Evidence, retained for audit. */
+    proofNonce: varchar("proof_nonce", { length: 64 }),
+    /** The signature that answered it. Public by nature; no key material. */
+    proofSignature: varchar("proof_signature", { length: 256 }),
     createdAt: createdAt(),
   },
   (table) => [uniqueIndex("agent_wallet_unique").on(table.agentId, table.network, table.address)],
+);
+
+/**
+ * Outstanding proof-of-control challenges.
+ *
+ * Each row is a single-use nonce this service issued, bound to the agent, the
+ * network and the address it was issued for. Consuming one is an atomic
+ * conditional update, so the same proof cannot be replayed even by two requests
+ * racing each other.
+ */
+export const walletChallenges = pgTable(
+  "wallet_challenges",
+  {
+    id: id().primaryKey(),
+    organizationId: id("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: id("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    network: varchar("network", { length: 32 }).notNull(),
+    address: varchar("address", { length: 128 }).notNull(),
+    chainId: integer("chain_id").notNull(),
+    nonce: varchar("nonce", { length: 64 }).notNull(),
+    domain: varchar("domain", { length: 253 }).notNull(),
+    statement: text("statement").notNull(),
+    uri: text("uri").notNull(),
+    resource: text("resource").notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true, mode: "date" }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }).notNull(),
+    /** Set exactly once, by the request that successfully answers it. */
+    consumedAt: timestamp("consumed_at", { withTimezone: true, mode: "date" }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex("wallet_challenges_nonce_unique").on(table.nonce),
+    index("wallet_challenges_agent_idx").on(table.agentId),
+  ],
 );
 
 export const economicMandates = pgTable(

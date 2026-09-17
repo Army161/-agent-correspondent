@@ -71,6 +71,13 @@
       "when": 1789601351132,
       "tag": "0009_auth_rate_limits",
       "breakpoints": false
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789603311738,
+      "tag": "0010_heavy_kinsey_walden",
+      "breakpoints": true
     }
   ]
 }
