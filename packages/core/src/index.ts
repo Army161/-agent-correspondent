@@ -35,6 +35,7 @@ export * from "./jobs/lifecycle";
 export * from "./onboarding/index";
 export * from "./identity/verification";
 export * from "./credentials/index";
+export * from "./sentinel/index";
 export {
   HALF_CURVE_ORDER,
   addressFromPublicKey,
