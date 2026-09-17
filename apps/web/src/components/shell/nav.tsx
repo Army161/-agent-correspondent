@@ -11,6 +11,7 @@ import {
   Coins,
   CreditCard,
   LayoutGrid,
+  Lock,
   MessageSquare,
   Scale,
   Settings,
@@ -35,8 +36,9 @@ const PRIMARY = [
 
 const SECONDARY = [
   { href: "/billing", label: "Billing", icon: CreditCard },
+  { href: "/settings/security", label: "Account security", icon: Lock },
   { href: "/settings", label: "Settings", icon: Settings },
-  { href: "/security", label: "Security", icon: Shield },
+  { href: "/security", label: "Platform security", icon: Shield },
 ] as const;
 
 function NavLink({
@@ -73,7 +75,14 @@ function NavLink({
 export function AppNav({ userEmail }: { userEmail?: string | null }): React.JSX.Element {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const isActive = (href: string): boolean => pathname === href || pathname.startsWith(`${href}/`);
+  // The longest match wins, so /settings does not light up while the user is
+  // on /settings/security.
+  const matches = (href: string): boolean => pathname === href || pathname.startsWith(`${href}/`);
+  const best = [...PRIMARY, ...SECONDARY]
+    .map((item) => item.href)
+    .filter(matches)
+    .sort((a, b) => b.length - a.length)[0];
+  const isActive = (href: string): boolean => href === best;
 
   const body = (
     <>

@@ -105,6 +105,27 @@ construction, so a database disclosure reveals nothing usable.
 `AUTH_RP_ID` defaults to the site hostname. Changing it invalidates every
 enrolled passkey, so it is set once and left alone.
 
+## Where a person manages this
+
+`/settings/security` — passkeys, two-factor, and every active session with its
+IP, client and sign-in time.
+
+The lists are read **server-side** and passed in, so they are correct on first
+paint and a browser that never runs the client code still sees the truth. The
+client re-reads only after it has changed something.
+
+Sessions are identified to the page by **id, never token**. The token is a
+bearer credential, and a page that renders it hands it to anything that can read
+the DOM. The current session has no "End session" button, so nobody locks
+themselves out by accident.
+
+Enabling or disabling two-factor requires the account password. A stolen cookie
+must not be enough to add a second factor the real owner does not control, nor
+to remove the one they do.
+
+Backup codes are shown exactly once, at generation, with that fact stated at the
+moment they appear. They are stored hashed; there is no second chance.
+
 ## Redirects
 
 `?next=` is attacker-controlled. `safeInternalPath()`

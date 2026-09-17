@@ -27,6 +27,13 @@ import { getAuth } from "./server";
 export interface SessionUser {
   readonly id: string;
   readonly authUserId: string;
+  /**
+   * The current session's id.
+   *
+   * The id, never the token: the token is a bearer credential, and a page that
+   * renders it hands it to anything that can read the DOM.
+   */
+  readonly sessionId: string;
   readonly email: string;
   readonly displayName: string | null;
   readonly emailVerified: boolean;
@@ -62,7 +69,7 @@ export async function currentUser(): Promise<SessionUser | null> {
       emailVerified?: boolean;
       twoFactorEnabled?: boolean | null;
     };
-    const session = result.session as { createdAt?: Date; updatedAt?: Date };
+    const session = result.session as { id?: string; createdAt?: Date; updatedAt?: Date };
 
     const membership = await ensureMembership(authUser.id, authUser.email, authUser.name ?? null);
     if (!membership) return null;
@@ -75,6 +82,7 @@ export async function currentUser(): Promise<SessionUser | null> {
     return {
       id: membership.userId,
       authUserId: authUser.id,
+      sessionId: session.id ?? "",
       email: authUser.email,
       displayName: authUser.name ?? null,
       emailVerified: authUser.emailVerified === true,
