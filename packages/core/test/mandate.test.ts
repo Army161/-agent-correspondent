@@ -106,6 +106,32 @@ describe("ATTACK: overspend", () => {
     expect(codes(decision)).toContain("MINIMUM_RESERVE_BREACHED");
   });
 
+  it("permits breaching the reserve when the mandate explicitly allows credit", () => {
+    // Dipping below the reserve floor is taking on credit. A mandate that
+    // says so explicitly is allowed to; one that does not is denied exactly
+    // as the case above -- this must never happen on its own.
+    const creditMandate = { ...mandate, creditAllowed: true };
+    const decision = evaluateMandate(creditMandate, { ...baseRequest, amount: usd("5") }, {
+      ...healthy,
+      availableBalance: usd("24.99"),
+    });
+    expect(decision.decision).toBe("ALLOW");
+    expect(codes(decision)).not.toContain("MINIMUM_RESERVE_BREACHED");
+  });
+
+  it("still enforces every other limit when credit is allowed", () => {
+    // Credit is not a blanket exemption: it only ever concerns the reserve
+    // floor. A spend that would also blow the daily limit is still denied.
+    const creditMandate = { ...mandate, creditAllowed: true, dailySpendLimitUsd: usd("3") };
+    const decision = evaluateMandate(creditMandate, { ...baseRequest, amount: usd("5") }, {
+      ...healthy,
+      availableBalance: usd("24.99"),
+    });
+    expect(decision.decision).toBe("DENY");
+    expect(codes(decision)).toContain("DAILY_LIMIT_EXCEEDED");
+    expect(codes(decision)).not.toContain("MINIMUM_RESERVE_BREACHED");
+  });
+
   it("blocks zero and negative amounts", () => {
     expect(evaluateMandate(mandate, { ...baseRequest, amount: 0n }, healthy).decision).toBe("DENY");
     expect(evaluateMandate(mandate, { ...baseRequest, amount: -usd("1") }, healthy).decision).toBe(

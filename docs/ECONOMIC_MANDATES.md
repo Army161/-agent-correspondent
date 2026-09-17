@@ -42,7 +42,7 @@ denied. See [MONEY_MODEL.md](./MONEY_MODEL.md).
 | `network.allowed` | the network is not in `allowedNetworks` |
 | `transaction.max` | the amount exceeds `maxTransactionUsd` |
 | `daily.limit` | today's spend plus this one exceeds `dailySpendLimitUsd` |
-| `reserve.floor` | the remaining balance would fall below `minimumReserveUsd` |
+| `reserve.floor` | the remaining balance would fall below `minimumReserveUsd`, unless `creditAllowed` is true |
 | `counterparty.unverifiedLimit` | the counterparty is unverified and the amount exceeds `unverifiedCounterpartyLimitUsd` |
 | `credit.allowed` | the spend incurs credit and `creditAllowed` is false |
 | `tokenTrading.allowed` | the spend is a token trade and `tokenTradingAllowed` is false |
@@ -55,6 +55,25 @@ value — for the audit log and the UI.
 `DENY` takes precedence over `REQUIRE_HUMAN_APPROVAL`. A human approval flag
 never rescues a spend that violates a hard limit: approving a $500 payment does
 not raise a $5 per-transaction ceiling.
+
+## The reserve floor and credit
+
+Dipping below `minimumReserveUsd` is taking on credit, by definition — the
+agent would be spending money it was told to keep in reserve. A mandate with
+`creditAllowed: false` denies it, exactly like any other hard limit. A mandate
+with `creditAllowed: true` permits it, and only it: `creditAllowed` does not
+relax `dailySpendLimitUsd`, `maxTransactionUsd`, or any other rule, each of
+which is still checked and can still deny the same spend on its own terms.
+
+This is why `creditAllowed` exists at all, not just as a label on
+`request.incursCredit` (which is a separate, agent-declared flag for spends
+that are explicitly a loan or an advance — a purchase on terms, say). Without
+this rule, no agent could ever make its first μLedger payment: a fresh agent
+with no funding has `availableBalance` at or below its reserve floor, so every
+spend would breach the reserve and reserve.floor would deny it unconditionally
+regardless of `creditAllowed` — the very setting meant to permit exactly that.
+An operator who wants an agent that can only ever spend money it already has
+sets `creditAllowed: false` and funds the agent before its first job.
 
 ## Fail-closed
 

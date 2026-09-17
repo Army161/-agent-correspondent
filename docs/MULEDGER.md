@@ -97,6 +97,70 @@ an edited instruction list, which is exactly the tampering that would matter.
 The hash is order-independent: a ledger built in a different insertion order
 produces the same cycle and the same proof.
 
+## Jobs: where obligations come from
+
+An obligation on the μLedger does not appear by itself. For escrowed,
+evaluated work — as opposed to a synchronous nanopayment — it comes from a
+job, the ERC-8183-style state machine in `packages/core/src/jobs/lifecycle.ts`
+(`DRAFT → QUOTED → FUNDED → IN_PROGRESS → SUBMITTED → EVALUATING →
+COMPLETE/REJECTED → SETTLED`, with `DISPUTED` as a side branch). The state
+machine itself only says which transitions are legal; `apps/web/src/lib/jobs.ts`
+is where a transition meets real money.
+
+**FUND** binds an already-accepted, signed `EconomicIntent` as the job's
+escrow. The intent must be `OPEN` (accepted by the relay, not yet consumed),
+name this exact buyer and provider, settle on `MULEDGER` — funding a job from
+a live rail's intent is not implemented; see the note below — and authorize at
+least the job's quoted price. It is consumed atomically in the same
+transaction that moves the job to `FUNDED`: a job never reads as funded
+without its intent reading as `CONSUMED`, and that intent can never fund a
+second job.
+
+**SETTLE** releases escrow. From `COMPLETE` it pays the quoted price in full;
+from `REJECTED` it pays nothing. Either way, one database transaction writes:
+
+- a μLedger entry (skipped when the final price is zero — there is nothing to
+  owe),
+- an immutable `EconomicReceipt`, via `createReceipt`/`receiptHash` — written
+  even for a zero-value settlement, because "conclusively not owed" is exactly
+  as much a record as "owed",
+- a `transactions` row (skipped when the final price is zero) — this is the
+  table every mandate spend limit and every Sentinel-5 anomaly sensor reads,
+  so a settlement that never wrote here would be invisible to both,
+- a reputation event (`JOB_COMPLETED` or `JOB_FAILED`).
+
+A job that reads as `SETTLED` therefore always has a receipt, and a job with a
+receipt always has the ledger entry and transaction that produced it — there
+is no window where one exists without the others.
+
+Not yet built: funding a job with an intent settled on a live rail (Arc,
+XRPL). Every job funds and settles on the μLedger today.
+
+## Running a clearing cycle
+
+`getClearing` (`apps/web/src/lib/platform.ts`) only *projects* what a cycle
+would net to — it changes nothing. Actually running one is
+`runClearing` in `apps/web/src/lib/clearing.ts`, exposed as
+`POST /api/v1/clearing` (`{ asset, mode }`, mode `BILATERAL` or
+`MULTILATERAL`).
+
+A run reads every `OPEN` entry for the caller's organization and asset, nets
+it, and — inside one transaction — persists the `clearing_cycles` row (proof
+hash, instructions, entry and instruction counts) and moves every entry it
+consumed from `OPEN` to `NETTED`. If another run touches one of those entries
+between the read and the write, the update's `WHERE state = 'OPEN'` guard
+catches the mismatch and the whole run is rolled back rather than persisting
+a cycle whose inputs already moved.
+
+**Running a cycle never marks anything `SETTLED`.** Netting only reduces how
+many transfers are owed and how large they are; it does not move money, and
+no settlement rail has signing authority configured in this deployment (see
+`docs/ARC.md`, `docs/XRPL.md`). Recording `SETTLED` without a real payment
+behind it would be exactly the fabricated transaction this codebase refuses
+to produce. Marking a netted instruction as actually paid, once a rail with
+signing authority exists, is a separate, explicit action that is not yet
+built.
+
 ## Observed behaviour
 
 Against a live Postgres, five obligations between three agents:

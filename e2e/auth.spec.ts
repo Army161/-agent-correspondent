@@ -67,7 +67,8 @@ test.describe("session boundary", () => {
     await expect(page).toHaveURL(/\/login\?next=%2Fonboarding/);
   });
 
-  test("an off-site redirect target is discarded", async ({ page }) => {
+  test("an off-site redirect target is discarded", async ({ page, request }) => {
+    test.skip(!(await databaseConfigured(request)), "database not configured");
     // A `?next=` pointing off-site must not be where a successful sign-in
     // lands: that chain turns a real sign-in page into credential theft.
     await page.goto("/login?mode=register&next=https%3A%2F%2Fevil.example%2Fsteal");

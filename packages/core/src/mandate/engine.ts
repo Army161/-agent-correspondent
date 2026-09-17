@@ -273,6 +273,13 @@ export function evaluateMandate(
   }
 
   // --- reserve floor -------------------------------------------------------
+  //
+  // Dipping below the reserve floor *is* taking on credit — the agent would
+  // owe more than it holds. Rather than a hard wall independent of
+  // `creditAllowed`, a mandate that explicitly permits credit is allowed to
+  // breach the reserve; one that does not is denied exactly as before. This
+  // is what makes `creditAllowed` mean something on the real settlement path,
+  // where nothing else ever sets `incursCredit` explicitly.
   if (usdAmount === null) {
     record("reserve.floor", false, { observed: "spend could not be valued" });
   } else if (context.availableBalance === null) {
@@ -285,7 +292,8 @@ export function evaluateMandate(
     );
   } else {
     const remaining = context.availableBalance - usdAmount;
-    const reserveHeld = remaining >= mandate.minimumReserveUsd;
+    const wouldBreachReserve = remaining < mandate.minimumReserveUsd;
+    const reserveHeld = !wouldBreachReserve || mandate.creditAllowed;
     record("reserve.floor", reserveHeld, {
       limit: formatUsd(mandate.minimumReserveUsd, { symbol: true }),
       observed: formatUsd(remaining, { symbol: true }),

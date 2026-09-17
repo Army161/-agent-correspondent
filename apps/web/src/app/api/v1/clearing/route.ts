@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import { formatUsd } from "@acor/core";
 
-import { authenticateRequest, notConnected, unauthorized } from "@/lib/api";
+import { authenticateRequest, badRequest, notConnected, unauthorized, readJson } from "@/lib/api";
+import { runClearing } from "@/lib/clearing";
 import { getClearing } from "@/lib/platform";
 
 export const runtime = "nodejs";
@@ -58,4 +60,60 @@ export async function GET(request: Request): Promise<NextResponse> {
       settledAt: cycle.settledAt?.toISOString() ?? null,
     })),
   });
+}
+
+const runSchema = z.object({
+  asset: z.string().min(1).max(16).default("USDC"),
+  mode: z.enum(["BILATERAL", "MULTILATERAL"]).default("BILATERAL"),
+});
+
+/**
+ * Actually run a clearing cycle: net every OPEN entry for this organization
+ * and asset, persist the cycle, and flip the consumed entries to NETTED. See
+ * `lib/clearing.ts` for why this never marks anything SETTLED.
+ */
+export async function POST(request: Request): Promise<NextResponse> {
+  const principal = await authenticateRequest(request);
+  if (!principal) return unauthorized();
+
+  const body = await readJson(request);
+  const parsed = runSchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    return badRequest(
+      `${parsed.error.issues[0]?.path.join(".") ?? "body"}: ${parsed.error.issues[0]?.message ?? "invalid"}`,
+    );
+  }
+
+  const result = await runClearing(
+    principal.organizationId,
+    parsed.data.asset.toUpperCase(),
+    parsed.data.mode,
+  );
+  if (!result.ok) {
+    return NextResponse.json({ error: "NOT_RUN", message: result.error }, { status: 409 });
+  }
+
+  const { cycle } = result;
+  return NextResponse.json(
+    {
+      cycleId: cycle.cycleId,
+      asset: cycle.asset,
+      mode: cycle.mode,
+      gross: formatUsd(cycle.grossTotal),
+      net: formatUsd(cycle.netTotal),
+      saved: formatUsd(cycle.savedTotal),
+      savedTransfers: cycle.savedTransfers,
+      entryCount: cycle.entryIds.length,
+      instructionCount: cycle.instructions.length,
+      proofHash: cycle.proofHash,
+      instructions: cycle.instructions.map((instruction) => ({
+        from: instruction.from,
+        to: instruction.to,
+        amount: formatUsd(instruction.amount),
+        asset: instruction.asset,
+      })),
+      openedAt: cycle.openedAt.toISOString(),
+    },
+    { status: 201 },
+  );
 }

@@ -96,8 +96,8 @@ test.describe("without a database", () => {
 
   test("sign-in explains what is missing rather than failing silently", async ({ page }) => {
     await page.goto("/login");
-    await expect(page.getByText(/no database configured/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: "Sign in" })).toBeDisabled();
+    await expect(page.getByText(/no database is configured/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toBeDisabled();
   });
 
   test("the chat input is disabled and says why", async ({ page }) => {
