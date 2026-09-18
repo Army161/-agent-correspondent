@@ -87,6 +87,9 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm e2e
 [ACOR](docs/ACOR.md) ·
 [Deployment](docs/DEPLOYMENT.md)
 
+Current release gates and the distinction between verified, configured, and
+non-live capabilities are tracked in [Release readiness](docs/RELEASE_READINESS.md).
+
 [FINAL_REPORT.md](FINAL_REPORT.md) states exactly what is complete, what is
 stubbed, what credentials are needed, and what is not done.
 

@@ -8,19 +8,26 @@ about limitations: a report that only lists what works is not a report.
 
 ---
 
-## Verification
+## Current verification status
 
-All four gates pass, from a clean checkout:
+The figures below distinguish the current checked-out code from the earlier
+release snapshot. They are not a claim that an unconfigured local machine has
+completed a production deployment.
 
 | Command | Result |
 | --- | --- |
-| `pnpm lint` | pass — 4 packages, zero errors, zero warnings |
-| `pnpm typecheck` | pass — 4 packages, TypeScript strict with `noUncheckedIndexedAccess` |
-| `pnpm test` | pass — **176 tests**, 7 files |
-| `pnpm build` | pass — 23 routes |
-| `pnpm e2e` | pass — **54 Playwright tests** (desktop + mobile) against a configured deployment; **20** against an unconfigured one |
+| Node 22.12 unit suite | pass — **450 tests**, 28 files |
+| `pnpm lint` | pass on Node 22.12 in a clean short-path checkout |
+| `pnpm typecheck` | pass on Node 22.12 in a clean short-path checkout |
+| `pnpm build` | pass on Node 22.12 in a clean short-path checkout |
+| `pnpm e2e` without `DATABASE_URL` | pass; the complete browser matrix records `passed`, with database-only cases intentionally skipped |
+| `pnpm e2e` with PostgreSQL 16 | blocked on this host: Docker Desktop's engine pipe is unavailable; the GitHub Actions job provisions PostgreSQL 16 and remains the required release gate |
 
-### Verified against real infrastructure
+### Historical verified database evidence
+
+The following was recorded before this recovery pass. It has not been repeated
+on the current host because its Docker Desktop engine is unavailable; do not
+treat it as a current configured-suite result.
 
 The e2e suite was run twice against a production build:
 
@@ -109,10 +116,13 @@ logo in seven asset variants, SEO and Open Graph.
 **Pages:** `/` `/chat` `/agents` `/agents/[id]` `/jobs` `/jobs/[id]` `/wallets`
 `/clearing` `/activity` `/developers` `/acor` `/settings` `/security` `/login`
 
-**API:** `GET /api/health` · `POST /api/chat` ·
+**Core API:** `GET /api/health` · `POST /api/chat` ·
 `GET /api/v1/network/capabilities` · `GET,POST /api/v1/agents` ·
 `GET /api/v1/quotes` · `POST /api/v1/intents` · `POST /api/v1/mandate/check` ·
-`GET /api/v1/clearing`
+`GET /api/v1/clearing` · `GET,POST /api/v1/jobs` ·
+`GET /api/v1/jobs/[id]` · `POST /api/v1/jobs/[id]/transition` ·
+`GET,POST /api/v1/webhooks` · security, convoy, wallet, credential, billing,
+and auth endpoints.
 
 ---
 
@@ -163,16 +173,19 @@ Stated plainly.
 3. **No ACOR contract exists.** The `/acor` page displays
    `CONTRACT NOT YET DEPLOYED` and the e2e suite asserts no 40-hex address
    appears there.
-4. **Job creation has no API yet.** The lifecycle state machine, schema and UI
-   are complete, but nothing writes a job row; `/jobs` is correctly empty.
+4. **Job creation is an API-backed vertical slice, not a live-settlement
+   product.** Jobs can be created and transitioned through their guarded
+   lifecycle, but funding and settlement still require a verified live rail.
 5. **Clearing cycles are projected, not executed.** `/clearing` shows what
    netting would produce right now, computed from real ledger entries. Committing
    a cycle and settling it requires a live rail.
 6. **μLedger entries have no write API.** Obligations would be created by a
    completed x402 or nanopayment call, which requires a live rail.
-7. **No rate limiting** at the application layer. Deploy behind a gateway.
-8. **No CSRF origin check.** Mutating routes rely on `sameSite=lax` cookies and
-   JSON content types.
+7. **Rate limiting is currently scoped to authentication.** Other public API
+   endpoints still need gateway-level limits before production exposure.
+8. **No general CSRF origin check exists for every mutating API route.**
+   Auth uses trusted origins and same-site cookies; broader route coverage is
+   still required.
 9. **Evaluator attestations are unverified.** The evaluator is recorded on the
    intent and receipt but does not yet sign its verdict.
 10. **Multilateral netting is `EXPERIMENTAL`.** It is implemented and tested,
@@ -186,7 +199,9 @@ Stated plainly.
     no telemetry in this build.
 13. **The landing page chat panel is a static illustration**, labelled as such on
     the page and asserted by a test. It is not a live readout.
-14. **No TypeScript SDK.** The REST API is complete; a typed client is not built.
+14. **The TypeScript SDK is present but not yet published.** `packages/sdk`
+   contains the typed client and webhook verifier; package publishing and
+   versioning are still required.
 
 ---
 

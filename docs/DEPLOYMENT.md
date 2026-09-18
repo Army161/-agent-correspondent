@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js ≥ 20.11
+- Node.js ≥ 22.12
 - pnpm 10
 - PostgreSQL 14+
 
@@ -82,7 +82,7 @@ than a control.
 ```bash
 pnpm lint
 pnpm typecheck
-pnpm test          # 176 kernel tests
+pnpm test          # unit suite; see FINAL_REPORT.md for the current count
 pnpm build
 pnpm e2e           # Playwright, desktop and mobile
 ```

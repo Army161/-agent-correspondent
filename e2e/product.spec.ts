@@ -102,7 +102,9 @@ test.describe("without a database", () => {
 
   test("the chat input is disabled and says why", async ({ page }) => {
     await page.goto("/chat");
-    await expect(page.getByText(/Not signed in|AI provider not configured/i).first()).toBeVisible();
+    // The desktop rail repeats this status for responsive layouts but is hidden
+    // on mobile. Assert the accessible status in the visible application body.
+    await expect(page.getByRole("main").getByText(/Not signed in|AI provider not configured/i)).toBeVisible();
     await expect(page.getByLabel("Message the Agent Chat OS")).toBeDisabled();
   });
 });

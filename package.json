@@ -5,7 +5,7 @@
   "description": "Agent Correspondent — Full-Stack Agent Chat OS for the Machine Economy",
   "packageManager": "pnpm@10.33.0",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=22.12 <23"
   },
   "scripts": {
     "dev": "pnpm --filter @acor/web dev",
