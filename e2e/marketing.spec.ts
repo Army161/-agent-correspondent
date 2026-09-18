@@ -140,6 +140,15 @@ test.describe("ACOR token page", () => {
 });
 
 test.describe("navigation", () => {
+  test("redirects the www hostname to the canonical apex", async ({ request }) => {
+    const response = await request.get("/pricing", {
+      headers: { host: "www.agentcorrespondent.com" },
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(308);
+    expect(response.headers().location).toBe("https://agentcorrespondent.com/pricing");
+  });
+
   test("every required route responds", async ({ page }) => {
     for (const route of [
       "/",

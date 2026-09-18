@@ -8,6 +8,8 @@
  * for interactive local development only.
  */
 
+import { fileURLToPath } from "node:url";
+
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
@@ -26,7 +28,7 @@ async function main(): Promise<void> {
   const db = drizzle(client);
 
   console.log("[migrate] applying pending migrations from ./migrations ...");
-  await migrate(db, { migrationsFolder: new URL("../migrations", import.meta.url).pathname });
+  await migrate(db, { migrationsFolder: fileURLToPath(new URL("../migrations", import.meta.url)) });
   console.log("[migrate] done.");
 
   await client.end({ timeout: 5 });

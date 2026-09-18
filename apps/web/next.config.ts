@@ -10,6 +10,16 @@ const config: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "www.agentcorrespondent.com" }],
+        destination: "https://agentcorrespondent.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

@@ -88,15 +88,22 @@ describe("status derivation", () => {
       "INTEGRATING",
     );
   });
+
+  it("does not treat internal code as a live financial rail", () => {
+    const capabilities = new ProtocolCapabilityEngine({ production: true });
+    expect(publicStatusFor(capabilities.get("MULEDGER.BILATERAL_NETTING"), true, true)).toBe(
+      "INTEGRATING",
+    );
+  });
 });
 
 describe("the manifest as a whole", () => {
   it("reports nothing as LIVE on an unconfigured deployment", () => {
     const manifest = buildCapabilityManifest(inputs());
     const live = manifest.features.filter((feature) => feature.status === "LIVE");
-    // The μLedger is this application's own code, so it is the one thing that
-    // can be live without a network. Everything else needs a probe.
-    expect(live.map((feature) => feature.id)).toEqual(["muledger.bilateral-netting"]);
+    // Tests verify the implementation, not a public financial operation. Every
+    // rail needs an independent production probe before the product says LIVE.
+    expect(live).toEqual([]);
   });
 
   it("never claims a partnership, only an integration status", () => {

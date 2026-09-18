@@ -71,10 +71,11 @@ export function publicStatusFor(
   production: boolean,
   configured: boolean,
 ): PublicStatus {
-  // "live" means a network probe confirmed it. "internal" means the capability
-  // is this repository's own code, which is verified by the test suite rather
-  // than by a network call — the one honest way to be live without a probe.
-  const probed = record.source === "live" || record.source === "internal";
+  // "live" means a network probe confirmed it. Internal implementation and a
+  // passing test suite are valuable evidence, but they do not prove that a
+  // public deployment is operating a financial rail. Treat them as integrating
+  // until an independently verified production rail is represented by a probe.
+  const probed = record.source === "live";
 
   switch (record.state) {
     case "AVAILABLE":
@@ -82,9 +83,6 @@ export function publicStatusFor(
       // state of AVAILABLE that came from config is a configuration claim, not
       // a verification, and is reported as work in progress.
       if (!probed) return configured || record.source === "config" ? "INTEGRATING" : "EXPLORING";
-      // Internal capabilities are not network-bound, so a non-production
-      // deployment does not make them testnet-only.
-      if (record.source === "internal") return "LIVE";
       return production ? "LIVE" : "TESTNET";
 
     case "TESTNET_ONLY":
