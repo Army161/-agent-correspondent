@@ -20,7 +20,7 @@ end-to-end path have been independently verified.
 | Area | Status | Required gate |
 | --- | --- | --- |
 | Vercel project and `agentcorrespondent.com` | blocked | Authenticated Vercel account, project inspection, domain ownership/DNS verification, then preview validation. |
-| Browser suite with PostgreSQL 16 | blocked on this host | Docker Desktop was started but its engine pipe did not become available. The configured GitHub Actions job remains required before preview or production. |
+| Browser suite with PostgreSQL 16 | blocked | Docker Desktop was started but its engine pipe did not become available. GitHub Actions is enabled, but its hosted jobs are refused before startup because the account has a billing lock. Resolve either environment before preview or production. |
 | OAuth, email, Paddle production billing | configuration-only | Provider credentials, callback URLs, signed-webhook checks, and negative-path validation. |
 | Arc, Circle, XRPL, Kaleido, BlockDAG | non-live | Authenticated provider access and a controlled end-to-end test. No agent has executed a cross-border transaction. |
 | Robinhood | not integrated | A separately authorized and suitable broker integration; no credentials or implementation are present. |

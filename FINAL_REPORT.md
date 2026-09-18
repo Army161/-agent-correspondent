@@ -21,7 +21,7 @@ completed a production deployment.
 | `pnpm typecheck` | pass on Node 22.12 in a clean short-path checkout |
 | `pnpm build` | pass on Node 22.12 in a clean short-path checkout |
 | `pnpm e2e` without `DATABASE_URL` | pass; the complete browser matrix records `passed`, with database-only cases intentionally skipped |
-| `pnpm e2e` with PostgreSQL 16 | blocked on this host: Docker Desktop's engine pipe is unavailable; the GitHub Actions job provisions PostgreSQL 16 and remains the required release gate |
+| `pnpm e2e` with PostgreSQL 16 | blocked: this host's Docker Desktop engine pipe is unavailable, and GitHub Actions is enabled but refuses hosted jobs before startup because the account has a billing lock |
 
 ### Historical verified database evidence
 
