@@ -72,6 +72,7 @@ async function signUp(page: Page): Promise<string> {
   await page.getByRole("button", { name: "Create account" }).click();
   // A new account lands in onboarding, not in the product.
   await page.waitForURL("**/onboarding");
+  expect(page.url()).not.toContain("password=");
   return email;
 }
 
@@ -123,6 +124,21 @@ test.describe("with a database", () => {
     const main = page.getByRole("main");
     await expect(main.getByText(email)).toBeVisible();
     await expect(main.getByText("Acme Research").first()).toBeVisible();
+  });
+
+  test("a signed-in user can create an agent through the product UI", async ({ page }) => {
+    await signUp(page);
+
+    await page.goto("/agents/new");
+    await page.getByLabel("Agent name").fill("Research Desk");
+    await page.getByLabel(/What will this agent do/).fill("Summarizes documents");
+    await page.getByRole("button", { name: "Create agent" }).click();
+
+    await page.waitForURL("**/agents/agent_*");
+    const main = page.getByRole("main");
+    await expect(main.getByRole("heading", { name: "Research Desk" })).toBeVisible();
+    await expect(main.getByRole("heading", { name: "Mandate" })).toBeVisible();
+    await expect(main.getByText("Denied", { exact: true }).first()).toBeVisible();
   });
 
   test("an agent created through the API appears in the UI with its mandate", async ({ page, request }) => {

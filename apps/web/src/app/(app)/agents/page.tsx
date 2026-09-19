@@ -28,7 +28,7 @@ export default async function AgentsPage(): Promise<React.JSX.Element> {
         title="Agents"
         description="Every agent has a model, a set of capabilities, bound wallets and a deterministic economic mandate. An agent without a mandate cannot spend."
         action={
-          <ButtonLink href="/settings" variant="primary">
+          <ButtonLink href="/agents/new" variant="primary">
             New agent
           </ButtonLink>
         }

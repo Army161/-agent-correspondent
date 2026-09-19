@@ -11,7 +11,7 @@
     "lint": "echo \"@acor/db: lint handled by typecheck\"",
     "generate": "drizzle-kit generate",
     "push": "drizzle-kit push",
-    "migrate": "node --experimental-strip-types src/migrate.ts"
+    "migrate": "tsx src/migrate.ts"
   },
   "dependencies": {
     "@acor/core": "workspace:*",

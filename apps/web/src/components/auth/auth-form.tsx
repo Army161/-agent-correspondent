@@ -226,8 +226,7 @@ export function AuthForm({
 
       {unconfigured.length > 0 ? (
         <p className="mt-3 text-[11px] leading-relaxed text-[var(--color-subtle)]">
-          {unconfigured.map((provider) => provider.label).join(", ")}{" "}
-          {unconfigured.length === 1 ? "sign-in is" : "sign-in is"} not available on this deployment:
+          {unconfigured.map((provider) => provider.label).join(", ")}{" sign-in is not available on this deployment: "}
           no OAuth credentials are configured for {unconfigured.length === 1 ? "it" : "them"}.
         </p>
       ) : null}

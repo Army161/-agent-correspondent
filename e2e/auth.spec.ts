@@ -81,6 +81,7 @@ test.describe("session boundary", () => {
     await page.getByRole("button", { name: "Create account" }).click();
 
     await page.waitForURL("**/onboarding");
+    expect(page.url()).not.toContain("password=");
     expect(new URL(page.url()).origin).toBe(new URL(page.url()).origin);
     expect(page.url()).not.toContain("evil.example");
   });

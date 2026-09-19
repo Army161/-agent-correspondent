@@ -28,8 +28,9 @@
     "@playwright/test": "1.63.0",
     "@types/node": "24.10.1",
     "ripple-keypairs": "3.1.0",
+    "tsx": "4.20.6",
     "typescript": "5.9.3",
     "viem": "2.56.5",
-    "vitest": "5.0.1"
+    "vitest": "3.2.4"
   }
 }
