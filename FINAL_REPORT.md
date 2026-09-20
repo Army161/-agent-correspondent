@@ -16,7 +16,7 @@ completed a production deployment.
 
 | Command | Result |
 | --- | --- |
-| Node 22.12 unit suite | pass — **450 tests**, 28 files |
+| Node 22.12 unit suite | pass — **451 tests**, 28 files |
 | `pnpm lint` | pass on Node 22.12 in a clean short-path checkout |
 | `pnpm typecheck` | pass on Node 22.12 in a clean short-path checkout |
 | `pnpm build` | pass on Node 22.12 in a clean short-path checkout |

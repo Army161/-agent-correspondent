@@ -8,14 +8,14 @@ end-to-end path have been independently verified.
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Unit suite | verified | 450 tests in 28 suites pass on Node.js 22.12 in a clean short-path checkout. |
+| Unit suite | verified | 451 tests in 28 suites pass on Node.js 22.12 in a clean short-path checkout. |
 | CI runtime | updated | GitHub Actions now uses Node.js 22.12, the runtime that supports the locked Vite/XRPL dependency graph. |
 | Static checks and production build | verified | Lint, strict typecheck, and the Next.js production build pass on Node.js 22.12 in the same checkout. |
-| Browser suite with PostgreSQL 16 | verified | The complete 194-case Playwright matrix passed against an isolated PostgreSQL 16 container on Node.js 22.12. |
-| Browser suite without a database | verified | The complete Playwright matrix passed with no `DATABASE_URL`; data-bearing cases skip and every unconfigured surface remains fail-closed. |
-| Database migration | verified | The non-interactive Drizzle migration completed against PostgreSQL 16 using a platform-safe file URL conversion. |
+| Browser suite with PostgreSQL 16 | partial | The signed-in agent-creation flow passed in desktop and mobile Playwright runs. The full matrix is pending a responsive Docker/PostgreSQL 16 engine; data-bearing cases cannot be called green while that service is unavailable. |
+| Browser suite without a database | partial | Public/auth boundary cases pass and database-dependent cases skip when `/api/health` reports `NOT_CONNECTED`; a complete rerun remains pending after the configured run. |
+| Database migration | verified | The non-interactive Drizzle migration completed against a fresh PostgreSQL 16 database under Node.js 22 using the `tsx` runner. |
 | Vercel project | verified | `agent-correspondent` is connected to `Army161/-agent-correspondent`, uses `apps/web`, Node.js 22, and deploys from `claude/agent-correspondent-spec-wggst1`. |
-| Vercel deployment | verified | The production Vercel hostname builds and serves the app. Its health endpoint is intentionally `DEGRADED`: no database, auth secret, AI provider, or external rail is configured. |
+| Vercel deployment | verified | The canonical Vercel hostname serves the app. Its health endpoint is intentionally `DEGRADED`; no database or auth secret is configured, and `ACOR_ENV` is currently unset so the deployment reports development mode. |
 | Public capability status | verified | The production manifest reports zero `LIVE` rails; μLedger is `INTEGRATING` until independently verified rather than being promoted from code alone. |
 | Financial safeguards | verified in code | Intent bounds, Sentinel-5, kill switches, quarantine, wallet ownership proofs, and fail-closed capability states remain present. |
 | ACOR positioning | verified in code | Utility-only; no deployed contract address, stock exposure, yield, dividends, revenue sharing, price support, or market-making. |
@@ -24,7 +24,7 @@ end-to-end path have been independently verified.
 
 | Area | Status | Required gate |
 | --- | --- | --- |
-| Canonical domain | verified | `https://agentcorrespondent.com` serves the production project over HTTPS. `www.agentcorrespondent.com` permanently redirects to the canonical apex. |
+| Canonical domain | verified | `https://agentcorrespondent.com` returns HTTPS 200, and `www.agentcorrespondent.com` returns a permanent redirect to the canonical apex. |
 | Hosted GitHub Actions | blocked externally | The hosted jobs are refused before startup because the account has a billing lock. Local Node.js 22.12/PostgreSQL 16 equivalents have passed; resolving the billing lock is still required for hosted CI. |
 | OAuth, email, Paddle production billing | configuration-only | Provider credentials, callback URLs, signed-webhook checks, and negative-path validation. |
 | Arc, Circle, XRPL, Kaleido, BlockDAG | non-live | Authenticated provider access and a controlled end-to-end test. No agent has executed a cross-border transaction. |
