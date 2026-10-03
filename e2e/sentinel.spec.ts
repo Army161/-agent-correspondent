@@ -124,6 +124,32 @@ test.describe("with a database", () => {
     expect(disengaged.status).toBe(200);
   });
 
+  test("an owner can freeze and unfreeze an agent from its page", async ({ page }) => {
+    await signUp(page, `sentinel-ui-${Date.now()}@example.com`);
+    const created = await api(page, "POST", "/api/v1/agents", {
+      name: "UI frozen",
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
+    const agentId = created.json.agentId as string;
+
+    await page.goto(`/agents/${agentId}`);
+    await expect(page.getByText("NOT FROZEN", { exact: true })).toBeVisible();
+    await page.getByLabel("Reason").fill("suspected compromise");
+    await page.getByRole("button", { name: "Freeze agent" }).click();
+    await expect(page.getByText("FROZEN", { exact: true })).toBeVisible();
+    await expect(page.getByText(/suspected compromise/)).toBeVisible();
+
+    // The page is not the source of truth; the kill-switch log is.
+    const listed = await api(page, "GET", "/api/v1/security/kill-switch");
+    const engaged = listed.json.engaged as { scope: string; target: string }[];
+    expect(engaged.some((entry) => entry.scope === "AGENT" && entry.target === agentId)).toBe(true);
+
+    await page.getByLabel("Reason").fill("false alarm");
+    await page.getByRole("button", { name: "Unfreeze agent" }).click();
+    await expect(page.getByText("NOT FROZEN", { exact: true })).toBeVisible();
+  });
+
   test("a frozen agent's submission is refused before the relay is touched", async ({ page }) => {
     const email = `sentinel-submit-${Date.now()}@example.com`;
     await signUp(page, email);
@@ -278,6 +304,28 @@ test.describe("with a database", () => {
       reason: "trying to freeze someone else's agent",
     });
     expect(attempt.status).toBe(404);
+  });
+
+  test("ATTACK: another organization's frozen agents are not listed to me", async ({ page }) => {
+    await signUp(page, `sentinel-list-a-${Date.now()}@example.com`);
+    const created = await api(page, "POST", "/api/v1/agents", {
+      name: "Theirs",
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
+    const theirAgent = created.json.agentId as string;
+    await api(page, "POST", "/api/v1/security/kill-switch", {
+      scope: "AGENT",
+      target: theirAgent,
+      action: "ENGAGE",
+      reason: "listing isolation test",
+    });
+
+    await signOut(page);
+    await signUp(page, `sentinel-list-b-${Date.now()}@example.com`);
+    const listed = await api(page, "GET", "/api/v1/security/kill-switch");
+    expect(listed.status).toBe(200);
+    expect(JSON.stringify(listed.json)).not.toContain(theirAgent);
   });
 
   test("a platform-wide switch requires the operator allowlist", async ({ page }) => {

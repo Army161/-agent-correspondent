@@ -132,6 +132,11 @@ connection.
 | `GLOBAL` | none | A platform operator only |
 | `PROVIDER` | a provider id | A platform operator only |
 
+An agent's page has a **Freeze agent / Unfreeze agent** control (Containment
+panel) over the same endpoint; WALLET freezes are API-only for now. Owners see
+their own AGENT/WALLET switches in `GET /api/v1/security/kill-switch` — never
+another organization's.
+
 Self-service AGENT/WALLET freezing is deliberate: a customer who suspects
 their own agent is compromised should not have to wait for an operator to
 stop it. `POST /api/v1/security/kill-switch` requires a **fresh session** — a

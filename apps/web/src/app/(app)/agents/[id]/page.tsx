@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { AgentContainment } from "@/components/agents/agent-containment";
 import { PageHeader } from "@/components/shell/page-header";
 import {
   Badge,
@@ -15,6 +16,7 @@ import {
 import { currentUser } from "@/lib/auth";
 import { latencyDisplay, percentDisplay, scoreDisplay, truncateMiddle, usdDisplay } from "@/lib/format";
 import { getAgent } from "@/lib/platform";
+import { killSwitchState } from "@/lib/security/kill-switches";
 
 export const metadata: Metadata = { title: "Agent" };
 export const dynamic = "force-dynamic";
@@ -51,6 +53,7 @@ export default async function AgentDetailPage({
   }
 
   const { agent, capabilities, wallets, mandate, reputation, ledger } = view.data;
+  const containment = await killSwitchState("AGENT", agent.id);
 
   return (
     <>
@@ -62,6 +65,21 @@ export default async function AgentDetailPage({
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
+        <Panel className="lg:col-span-3">
+          <PanelHeader
+            title="Containment"
+            description="Freezing refuses every intent this agent submits until you unfreeze it. Both need a recent sign-in."
+          />
+          <AgentContainment
+            agentId={agent.id}
+            state={{
+              engaged: containment.engaged,
+              reason: containment.reason,
+              since: containment.since?.toISOString() ?? null,
+            }}
+          />
+        </Panel>
+
         <Panel className="lg:col-span-2">
           <PanelHeader
             title="Overview"

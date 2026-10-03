@@ -84,6 +84,13 @@ async function resolveOwnedWalletTarget(
   return walletKillSwitchKey(agentId, network, match.address);
 }
 
+async function ownedAgentIds(organizationId: string): Promise<string[]> {
+  const db = getDb();
+  if (!db) return [];
+  const rows = await db.select({ id: agents.id }).from(agents).where(eq(agents.organizationId, organizationId));
+  return rows.map((row) => row.id);
+}
+
 async function ownsAgent(organizationId: string, agentId: string): Promise<boolean> {
   const db = getDb();
   if (!db) return false;
@@ -105,8 +112,21 @@ export async function GET(): Promise<NextResponse> {
   // An org owner sees platform-wide switches (they are affected by them) but
   // not other organizations' AGENT/WALLET switches — those carry another
   // tenant's agent ids, which is not this caller's information to have.
+  //
+  // Their *own* AGENT/WALLET switches are visible, though: an owner who froze
+  // an agent must be able to see that it is frozen. Ownership is checked
+  // against the agents table now, not trusted from the event row, so this also
+  // covers switches Sentinel-5 engaged automatically.
+  const own = new Set(
+    operator ? [] : await ownedAgentIds(fresh.user.organizationId),
+  );
+  const agentOf = (target: string | null) => (target ?? "").split(":")[0] ?? "";
   const visible = engaged.filter(
-    (entry) => entry.scope === "GLOBAL" || entry.scope === "RAIL" || operator,
+    (entry) =>
+      operator ||
+      entry.scope === "GLOBAL" ||
+      entry.scope === "RAIL" ||
+      ((entry.scope === "AGENT" || entry.scope === "WALLET") && own.has(agentOf(entry.target))),
   );
 
   return NextResponse.json({ engaged: visible, isOperator: operator });
