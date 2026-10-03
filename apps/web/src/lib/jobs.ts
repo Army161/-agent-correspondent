@@ -143,7 +143,7 @@ export async function createJob(input: CreateJobInput): Promise<JobResult> {
       detail: { action: "created" } as never,
     });
   } catch (cause) {
-    captureException(cause, { organizationId: input.organizationId, operation: "jobs.create" });
+    void captureException(cause, { organizationId: input.organizationId, operation: "jobs.create" });
     return { ok: false, error: "Could not create the job." };
   }
 
@@ -275,7 +275,7 @@ export async function transitionJob(input: TransitionInput): Promise<JobResult> 
     });
   } catch (cause) {
     if (sideEffectFailure) return sideEffectFailure;
-    captureException(cause, {
+    void captureException(cause, {
       organizationId: input.organizationId,
       operation: "jobs.transition",
       jobId: input.jobId,

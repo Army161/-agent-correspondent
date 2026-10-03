@@ -15,8 +15,10 @@ the same way it reports every other optional integration.
 
 **Unhandled errors are captured centrally.** `apps/web/src/instrumentation.ts`
 implements Next.js's `onRequestError` hook, which Next calls for every error
-thrown while rendering a server component or running a route handler, server
-action or middleware. Money-path failures that are caught and turned into an
+it captures while rendering a Server Component or running a Route Handler,
+Server Action or the proxy (this Next version's name for middleware). Delivery
+is awaited inside the hook, as Next requires, and React's error `digest` is
+attached so a report can be matched to the line Next itself logged. Money-path failures that are caught and turned into an
 error response (job creation and transitions, webhook delivery bookkeeping)
 are reported explicitly via `captureException` with the job, organization and
 transition attached.

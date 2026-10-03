@@ -151,8 +151,12 @@ function environment(): string {
 /**
  * Report an exception. Always logs structurally to stderr; additionally
  * forwards to Sentry when `SENTRY_DSN` is configured. Never throws.
+ *
+ * Returns the delivery promise. Ordinary call sites need not await it; a
+ * caller at the end of a request's life (Next's `onRequestError`) must, or the
+ * delivery can be cut off.
  */
-export function captureException(error: unknown, context?: CaptureContext): void {
+export function captureException(error: unknown, context?: CaptureContext): Promise<void> {
   const err = error instanceof Error ? error : new Error(String(error));
   console.error(
     JSON.stringify({
@@ -166,20 +170,20 @@ export function captureException(error: unknown, context?: CaptureContext): void
   );
 
   const dsn = dsnFromEnv();
-  if (!dsn) return;
-  void sendEnvelope(buildEnvelope(dsn, errorToEvent(err, "error", context, environment())));
+  if (!dsn) return Promise.resolve();
+  return sendEnvelope(buildEnvelope(dsn, errorToEvent(err, "error", context, environment())));
 }
 
 export function captureMessage(
   message: string,
   level: "error" | "warning" | "info" = "info",
   context?: CaptureContext,
-): void {
+): Promise<void> {
   console.log(JSON.stringify({ level, message, ...context, loggedAt: new Date().toISOString() }));
 
   const dsn = dsnFromEnv();
-  if (!dsn) return;
-  void sendEnvelope(buildEnvelope(dsn, messageToEvent(message, level, context, environment())));
+  if (!dsn) return Promise.resolve();
+  return sendEnvelope(buildEnvelope(dsn, messageToEvent(message, level, context, environment())));
 }
 
 export function errorReportingConfigured(): boolean {

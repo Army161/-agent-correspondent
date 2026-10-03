@@ -184,7 +184,7 @@ export async function dispatchWebhookEvent(
           error,
         });
       } catch (cause) {
-        captureException(cause, { organizationId, operation: "webhooks.recordAttempt", event });
+        void captureException(cause, { organizationId, operation: "webhooks.recordAttempt", event });
       }
     }),
   );
