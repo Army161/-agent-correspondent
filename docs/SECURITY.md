@@ -121,10 +121,19 @@ marketing:
 - **SSRF.** Provider endpoint fetching is not yet implemented, so there is no
   SSRF surface today — but there is also no allowlist ready for when discovery
   starts fetching remote endpoints. That allowlist must exist before it does.
-- **Rate limiting.** There is none at the application layer. Deploy behind a
-  gateway that provides it.
-- **CSRF.** Mutating API routes rely on `sameSite=lax` cookies and JSON content
-  types. Origin checking on state-changing routes should be added.
+- **Rate limiting.** Only the authentication routes are limited in-app
+  (`AUTH_RATE_LIMIT_*`, `apps/web/src/lib/auth/server.ts`). Every other route
+  is unlimited at the application layer; deploy behind a gateway that limits
+  them.
+- **CSRF — two layers, both tested; no Origin check.** Session cookies are
+  `SameSite=Lax`, so a cross-site POST arrives without one. Because that does
+  nothing against a same-site attacker (a compromised sibling subdomain), every
+  route that reads a JSON body also requires `Content-Type: application/json`,
+  which an HTML form cannot send and a cross-origin `fetch` cannot send without
+  a preflight this API never grants. `e2e/csrf.spec.ts` proves a `text/plain`
+  form carrying valid JSON is refused cross-site (401) and same-site (400).
+  Body-less mutating routes (`DELETE` on API keys and webhooks) rely on
+  SameSite alone; an explicit Origin check would cover them too.
 - **Evaluator trust.** The evaluator is recorded on the intent and the receipt,
   but evaluator attestations are not yet verified cryptographically.
 - **No live settlement.** No adapter broadcasts a transaction, so the

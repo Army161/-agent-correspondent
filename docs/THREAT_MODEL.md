@@ -103,7 +103,7 @@ payment.
 | Forged billing webhook | HMAC signature + timestamp freshness + replay table | `billing.test.ts`, `billing.spec.ts` | — |
 | Forged credential | Ed25519 verification against the published key; revocation list public | `credentials.spec.ts` | Issuer key rotation is not supported (see RUNBOOKS) |
 | Brute-force sign-in | Auth rate limiting (`AUTH_RATE_LIMIT_*`) | — | Other routes have no app-level rate limit; deploy behind a gateway |
-| CSRF on JSON routes | `sameSite=lax` cookies + JSON bodies | — | No explicit Origin check on mutating routes |
+| CSRF | `SameSite=Lax` session cookies, plus `Content-Type: application/json` required on every JSON body (refuses `text/plain` form smuggling even same-site) | `csrf.spec.ts` | Body-less `DELETE`s rely on SameSite alone; no Origin check |
 | SSRF via webhook URLs | Host resolved and every address must be public (loopback, RFC 1918, link-local incl. `169.254.169.254`, CGNAT, multicast, IPv6 equivalents and IPv4-mapped/NAT64 forms refused), checked at subscription **and** before each delivery; redirects not followed; `https:` required when `ACOR_ENV=production` | `target.test.ts` (38 cases) | DNS rebinding within one TTL — see below |
 
 ### Insider with database access

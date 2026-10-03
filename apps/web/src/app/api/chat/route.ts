@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import { buildTools } from "@/lib/ai/tools";
 import { resolveModel, SYSTEM_PROMPT } from "@/lib/ai/provider";
+import { isJsonRequest } from "@/lib/api";
 import { currentUser } from "@/lib/auth";
 import { recordAudit } from "@/lib/platform";
 
@@ -53,6 +54,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  if (!isJsonRequest(request)) {
+    return NextResponse.json({ error: "BAD_REQUEST", message: "Body must be JSON." }, { status: 400 });
+  }
   let body: unknown;
   try {
     body = await request.json();

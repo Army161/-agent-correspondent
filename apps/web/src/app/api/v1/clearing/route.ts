@@ -77,7 +77,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!principal) return unauthorized();
 
   const body = await readJson(request);
-  const parsed = runSchema.safeParse(body ?? {});
+  // Required, even if only `{}`: treating a missing body as "use the defaults"
+  // would let any request that is not JSON at all -- a forged form -- run a
+  // clearing cycle.
+  if (body === null) return badRequest("Body must be JSON (send {} for the defaults).");
+  const parsed = runSchema.safeParse(body);
   if (!parsed.success) {
     return badRequest(
       `${parsed.error.issues[0]?.path.join(".") ?? "body"}: ${parsed.error.issues[0]?.message ?? "invalid"}`,

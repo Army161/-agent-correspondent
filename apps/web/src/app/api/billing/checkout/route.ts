@@ -13,6 +13,7 @@
 
 import { NextResponse } from "next/server";
 
+import { isJsonRequest } from "@/lib/api";
 import { currentUser } from "@/lib/auth";
 import { createTransaction } from "@/lib/billing/paddle";
 import { billingConfigured, planById } from "@/lib/plans";
@@ -34,6 +35,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  if (!isJsonRequest(request)) {
+    return NextResponse.json({ error: "malformed body" }, { status: 400 });
+  }
   let body: { planId?: unknown; period?: unknown };
   try {
     body = (await request.json()) as typeof body;

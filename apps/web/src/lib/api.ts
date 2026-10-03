@@ -97,7 +97,24 @@ export function notConnected(): NextResponse {
   );
 }
 
+/**
+ * Whether the request declares a JSON body.
+ *
+ * Defence in depth against cross-site request forgery: a cross-site
+ * `<form enctype="text/plain">` can carry a perfectly valid JSON body without
+ * a CORS preflight, and only the SameSite cookie attribute stops it -- which
+ * does nothing against a same-site attacker. Requiring this header closes the
+ * form vector outright, because a cross-origin `fetch` that sets it triggers
+ * a preflight this API never grants. See e2e/csrf.spec.ts.
+ */
+export function isJsonRequest(request: Request): boolean {
+  const type = request.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+  return type === "application/json" || (type.startsWith("application/") && type.endsWith("+json"));
+}
+
+/** The parsed JSON body, or null when it is missing, malformed, or not declared as JSON. */
 export async function readJson(request: Request): Promise<unknown | null> {
+  if (!isJsonRequest(request)) return null;
   try {
     return await request.json();
   } catch {
