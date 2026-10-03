@@ -347,3 +347,58 @@ test.describe("with a database", () => {
     }
   });
 });
+
+test.describe("across organizations", () => {
+  test.skip(async ({ request }) => !(await databaseConfigured(request)), "database not configured");
+
+  // Discovery, the relay, the ledger and clearing are all scoped to one
+  // organization, so a job is too. Trading with another organization's agent
+  // is not built (docs/MULEDGER.md); these pin that it is refused cleanly
+  // rather than half-working.
+
+  test("ATTACK: a job cannot name another organization's agent as its provider", async ({ browser }) => {
+    const mine = await (await browser.newContext()).newPage();
+    const theirs = await (await browser.newContext()).newPage();
+    await signUp(mine);
+    await signUp(theirs);
+    const { buyerId } = await createBuyerAndProvider(mine);
+    const outside = await api(theirs, "POST", "/api/v1/agents", {
+      name: "Other org's agent",
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
+
+    const created = await api(mine, "POST", "/api/v1/jobs", {
+      buyerAgentId: buyerId,
+      providerAgentId: outside.json.agentId,
+      title: "Cross-org work",
+      service: "research.summarize",
+      priceUsd: "0.20",
+    });
+    expect(created.status).toBe(404);
+    expect(created.json.error).toBe("NOT_FOUND");
+  });
+
+  test("ATTACK: another organization cannot see or move my job", async ({ browser }) => {
+    const mine = await (await browser.newContext()).newPage();
+    const outsider = await (await browser.newContext()).newPage();
+    await signUp(mine);
+    await signUp(outsider);
+    const { buyerId, providerId } = await createBuyerAndProvider(mine);
+    const job = await api(mine, "POST", "/api/v1/jobs", {
+      buyerAgentId: buyerId,
+      providerAgentId: providerId,
+      title: "Private",
+      service: "research.summarize",
+      priceUsd: "0.10",
+    });
+    const jobId = job.json.jobId as string;
+
+    expect((await api(outsider, "GET", `/api/v1/jobs/${jobId}`)).status).toBe(404);
+    for (const transition of ["QUOTE", "CANCEL", "START", "SETTLE"]) {
+      expect((await api(outsider, "POST", `/api/v1/jobs/${jobId}/transition`, { transition })).status, transition).toBe(404);
+    }
+    expect(JSON.stringify((await api(outsider, "GET", "/api/v1/jobs")).json)).not.toContain(jobId);
+    expect((await api(mine, "GET", `/api/v1/jobs/${jobId}`)).json.job).toMatchObject({ state: "DRAFT" });
+  });
+});

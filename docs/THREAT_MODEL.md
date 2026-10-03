@@ -80,6 +80,8 @@ payment.
 | --- | --- | --- | --- |
 | Read or act on another org's agents, jobs, credentials, webhooks, keys | Every query scoped by `organization_id`; unowned ids answer 404, same as nonexistent | `product.spec.ts`, `credentials.spec.ts`, `wallets.spec.ts`, `webhooks.spec.ts`, `api-keys.spec.ts`, `sentinel.spec.ts` | No database row-level security; isolation is application-enforced |
 | Freeze another org's agent | Ownership checked before any kill switch | `sentinel.spec.ts` | — |
+| Commit another org's agent to a job, or move another org's job | Both agents must be in the caller's org; jobs answer 404 to non-parties | `jobs.spec.ts` | Cross-organization trade is not built (see `MULEDGER.md` for its preconditions) |
+| See another org's frozen agents | Kill-switch listing filtered to agents the caller owns | `sentinel.spec.ts` | — |
 | Bind someone else's wallet | Challenge/response signature proof, replay- and cross-agent-protected | `wallets.spec.ts` | — |
 | Exhaust plan limits server-side | Agent limits enforced in the route, not the form | `billing.spec.ts` | No general API rate limiting (auth routes only) |
 

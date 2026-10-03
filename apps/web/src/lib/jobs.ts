@@ -86,18 +86,17 @@ async function ownsAgent(db: Database, organizationId: string, agentId: string):
   return rows.length > 0;
 }
 
-async function agentExists(db: Database, agentId: string): Promise<boolean> {
-  const rows = await db.select({ id: agents.id }).from(agents).where(eq(agents.id, agentId)).limit(1);
-  return rows.length > 0;
-}
-
 /**
  * Create a job in DRAFT.
  *
- * The buyer agent must belong to the caller's organization — a job cannot be
- * created that would commit somebody else's agent to buy something. The
- * provider agent only needs to exist: this platform is a marketplace, and the
- * whole point is that buyer and provider are usually different organizations.
+ * Both agents must belong to the caller's organization. Discovery, the relay,
+ * the μLedger and clearing are all scoped to one organization, so a job naming
+ * another organization's provider could be created but never funded (the
+ * relay refuses the provider) and, if it were, neither side's ledger would
+ * show the other's half. Trading across organizations is not built; see
+ * docs/MULEDGER.md for what it needs, including that PASS/REJECT and
+ * RESOLVE_* must stop being open to "either side" first, or a provider could
+ * pass its own work and settle.
  */
 export async function createJob(input: CreateJobInput): Promise<JobResult> {
   const db = getDb();
@@ -106,8 +105,8 @@ export async function createJob(input: CreateJobInput): Promise<JobResult> {
   if (!(await ownsAgent(db, input.organizationId, input.buyerAgentId))) {
     return { ok: false, error: "No such buyer agent in this organization.", code: "NOT_FOUND" };
   }
-  if (!(await agentExists(db, input.providerAgentId))) {
-    return { ok: false, error: "No such provider agent.", code: "NOT_FOUND" };
+  if (!(await ownsAgent(db, input.organizationId, input.providerAgentId))) {
+    return { ok: false, error: "No such provider agent in this organization.", code: "NOT_FOUND" };
   }
   if (input.buyerAgentId === input.providerAgentId) {
     return { ok: false, error: "An agent cannot buy from itself.", code: "INVALID_INPUT" };

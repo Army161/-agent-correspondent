@@ -136,6 +136,25 @@ is no window where one exists without the others.
 Not yet built: funding a job with an intent settled on a live rail (Arc,
 XRPL). Every job funds and settles on the μLedger today.
 
+### One organization at a time
+
+A job's buyer and provider must both belong to the caller's organization.
+That is not a rule invented for jobs: provider discovery (`/api/v1/quotes`),
+the intent relay's provider lookup, the μLedger and clearing are all scoped
+to one organization, so a job naming another tenant's agent could be created
+but never funded. Trading between organizations needs, at minimum:
+
+- the relay to resolve a provider in another organization, and say which
+  provider identities a buyer may pay;
+- each side's ledger and clearing view to include its half of a
+  cross-organization obligation;
+- **PASS/REJECT and RESOLVE_\* to stop being open to "either side"** of the
+  job. Within one organization both sides belong to the same owner, so this
+  is moot today; across organizations it would let a provider pass its own
+  work, or award itself a dispute, and then settle. Evaluation should belong
+  to the buyer (or a named evaluator), and a dispute should be resolvable
+  only by the side conceding it.
+
 ## Running a clearing cycle
 
 `getClearing` (`apps/web/src/lib/platform.ts`) only *projects* what a cycle
