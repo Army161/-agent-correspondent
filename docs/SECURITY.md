@@ -68,7 +68,7 @@ Every item below is a test that passes only when the attack fails.
 | Testnet code in production | `TESTNET_ONLY` refused in production | `settlement.test.ts` |
 | Bid manipulation | commit/reveal with auction-bound commitments | `settlement.test.ts` |
 | Cross-organization probing | every economic endpoint is org-scoped | `product.spec.ts` |
-| Unauthenticated access | every economic endpoint refuses | `product.spec.ts` |
+| Unauthenticated access | every non-public route refuses, with no credentials and with an unknown API key — routes enumerated from the filesystem, so a new route that forgets to authenticate fails the test | `auth-boundary.spec.ts` |
 
 ## Fail-closed
 
