@@ -23,6 +23,24 @@ GET  /api/v1/webhooks          # list this organization's subscriptions
 DELETE /api/v1/webhooks/:id    # revoke — stops deliveries, keeps history
 ```
 
+## Allowed targets
+
+A webhook is a server-side request to a URL a tenant chose, so the URL is
+checked to stop it being aimed inward (SSRF):
+
+- `https:` is required when `ACOR_ENV=production`; elsewhere `http:` is also
+  accepted. No other scheme, and no `user:pass@` in the URL.
+- The host is resolved, and **every** address must be public. Loopback,
+  private (RFC 1918), link-local (including the `169.254.169.254` cloud
+  metadata address), carrier-grade NAT, multicast and reserved ranges are
+  refused, as are their IPv6 equivalents and IPv4-mapped / NAT64 spellings.
+- The check runs at subscription time and again immediately before every
+  delivery. Redirects are not followed; a 3xx is recorded as a failed attempt.
+
+`WEBHOOK_ALLOW_PRIVATE_TARGETS=true` turns the address check off for local
+development and CI. It is ignored when `ACOR_ENV=production`. See
+`docs/THREAT_MODEL.md` for the remaining DNS-rebinding window.
+
 ## Events
 
 | Event | Fires when |

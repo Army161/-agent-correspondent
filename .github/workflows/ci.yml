@@ -38,6 +38,9 @@ env:
   # AES-256-GCM key for encrypting outbound webhook signing secrets at rest,
   # see docs/WEBHOOKS.md.
   WEBHOOK_ENCRYPTION_KEY: "843c1d8c0e53065e6b348166d4e4feda7073b54e6c40495dc55da7336c71dae9"
+  # The e2e webhook tests deliver to a receiver on 127.0.0.1, which the SSRF
+  # guard refuses by default. This opt-in is ignored when ACOR_ENV=production.
+  WEBHOOK_ALLOW_PRIVATE_TARGETS: "true"
   # A local-only platform operator, so the RAIL/GLOBAL kill-switch and
   # quarantine paths can be exercised in tests.
   PLATFORM_OPERATOR_EMAILS: "operator@example.com"

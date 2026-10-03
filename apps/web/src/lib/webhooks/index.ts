@@ -15,6 +15,7 @@ import { and, eq, getDb, webhookDeliveryAttempts, webhooks } from "@acor/db";
 import { newId } from "@acor/core";
 
 import { captureException } from "../observability/sentry";
+import { checkWebhookTarget, policyFromEnv } from "./target";
 import { decryptSecret, encryptSecret, generateWebhookSecret, signPayload } from "./crypto";
 
 /** The event names a subscription may list. Every event this deployment fires. */
@@ -33,15 +34,6 @@ export type CreateWebhookResult =
   | { readonly ok: true; readonly id: string; readonly secret: string }
   | { readonly ok: false; readonly error: string; readonly code?: string };
 
-function validUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
 export async function createWebhookSubscription(
   organizationId: string,
   url: string,
@@ -49,7 +41,8 @@ export async function createWebhookSubscription(
 ): Promise<CreateWebhookResult> {
   const db = getDb();
   if (!db) return { ok: false, error: "No database is configured." };
-  if (!validUrl(url)) return { ok: false, error: "url must be a valid http(s) URL.", code: "INVALID_INPUT" };
+  const target = await checkWebhookTarget(url, policyFromEnv());
+  if (!target.ok) return { ok: false, error: target.reason, code: "INVALID_INPUT" };
   const unknown = events.filter((event) => !(WEBHOOK_EVENTS as readonly string[]).includes(event));
   if (unknown.length > 0) {
     return {
@@ -154,6 +147,10 @@ export async function dispatchWebhookEvent(
       let statusCode: number | null = null;
       let error: string | null = null;
       try {
+        // Re-checked at delivery: DNS can change after the subscription was
+        // accepted, and a host that was public then may not be now.
+        const allowed = await checkWebhookTarget(target.url, policyFromEnv());
+        if (!allowed.ok) throw new Error(`delivery refused: ${allowed.reason}`);
         const secret = decryptSecret(target.secretCiphertext);
         const signature = signPayload(secret, body);
         const response = await fetch(target.url, {
@@ -165,6 +162,9 @@ export async function dispatchWebhookEvent(
           },
           body,
           signal: AbortSignal.timeout(5000),
+          // A public host must not be able to bounce the delivery inward with
+          // a 3xx to an internal address; a redirect is recorded as a failure.
+          redirect: "manual",
         });
         statusCode = response.status;
         ok = response.ok;
