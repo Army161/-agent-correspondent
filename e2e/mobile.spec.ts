@@ -22,10 +22,15 @@ test("landing page fits the viewport with no horizontal scroll", async ({ page }
 });
 
 test("app routes fit the viewport and expose the mobile navigation", async ({ page }) => {
-  for (const route of ["/chat", "/agents", "/wallets", "/clearing", "/acor"]) {
+  for (const route of ["/chat", "/agents", "/wallets", "/clearing", "/acor", "/developers"]) {
     await page.goto(route);
+    // Measured against the device's screen width as well as clientWidth: under
+    // mobile emulation Chromium widens the layout viewport to fit overflowing
+    // content, so clientWidth grows with the bug and hides it.
     const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth -
+        Math.min(document.documentElement.clientWidth, window.screen.width),
     );
     expect(overflow, `${route} overflows horizontally`).toBeLessThanOrEqual(1);
   }

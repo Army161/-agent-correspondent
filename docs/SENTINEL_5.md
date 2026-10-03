@@ -220,8 +220,17 @@ ending that credential's ability to authenticate at all — but unlike an
 agent kill switch, revoking a session or an API key is not reversible (a
 burned cookie does not come back), and an automated response that revokes a
 legitimate user's session on a false positive would itself be a harmful
-automated action. It exists as a tool an operator can reach for; nothing
-calls it on Sentinel-5's own initiative.
+automated action. Nothing calls it on Sentinel-5's own initiative.
+
+Its callers are human-initiated: revoking an API key (`DELETE
+/api/v1/api-keys/:id`, from the Developers page, a session, or the leaked key
+itself) goes through `revokePrincipal`, so key revocation is audited as
+`security.principal_revoked` exactly like an incident response. Ending a
+browser session is done by its owner from Settings → Security. There is not
+yet an operator route to revoke a principal in *another* organization — an
+operator responding to a cross-tenant incident freezes the affected agents and
+wallets with kill switches, which is reversible, and asks the tenant to
+revoke.
 
 ## Evidence and audit
 

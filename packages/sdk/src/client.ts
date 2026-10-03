@@ -13,7 +13,7 @@ import { AgentCorrespondentApiError } from "./errors";
 export interface ClientOptions {
   /** e.g. "https://agentcorrespondent.com" or "http://127.0.0.1:3111" for local development. */
   readonly baseUrl: string;
-  /** An organization API key, as created in Settings. Omit only for the handful of public endpoints. */
+  /** An organization API key, issued on the Developers page (or `POST /api/v1/api-keys` from a signed-in session). Omit only for the handful of public endpoints. */
   readonly apiKey?: string;
   /** Override for testing; defaults to the global `fetch`. */
   readonly fetch?: typeof fetch;

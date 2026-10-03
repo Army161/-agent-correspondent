@@ -10,6 +10,9 @@ import {
   stateTone,
 } from "@/components/ui/primitives";
 import { probeAll, getSettlementPlane } from "@acor/adapters";
+import { ApiKeysPanel } from "@/components/developers/api-keys-panel";
+import { getDb } from "@acor/db";
+import { listApiKeys } from "@/lib/api-keys";
 import { currentUser } from "@/lib/auth";
 import { serviceStates } from "@/lib/env";
 
@@ -20,23 +23,33 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+// Every row is a route that exists in app/api. A developer page that lists
+// endpoints which 404 is worse than one that lists none.
 const ENDPOINTS = [
   ["GET", "/api/health", "Platform and adapter health"],
+  ["GET", "/api/v1/manifest", "What this deployment can and cannot do, with evidence"],
   ["GET", "/api/v1/network/capabilities", "Live state of every network primitive"],
   ["GET", "/api/v1/agents", "Agents in your organization"],
   ["POST", "/api/v1/agents", "Create an agent with a mandate"],
+  ["POST", "/api/v1/mandate/check", "Test a spend against a mandate"],
   ["GET", "/api/v1/quotes", "Rank providers on effective cost"],
   ["POST", "/api/v1/intents", "Compile a signable EconomicIntent"],
-  ["POST", "/api/v1/intents/relay", "Submit a signed intent to the relay"],
-  ["POST", "/api/v1/mandate/check", "Test a spend against a mandate"],
+  ["POST", "/api/v1/intents/submit", "Submit a signed intent to the relay"],
+  ["POST", "/api/v1/jobs", "Create an escrowed job"],
+  ["POST", "/api/v1/jobs/:id/transition", "Quote, fund, deliver, evaluate, settle"],
   ["GET", "/api/v1/clearing", "Gross, net and projected clearing"],
-  ["GET", "/api/v1/receipts", "Immutable economic receipts"],
-  ["GET", "/api/v1/reputation/:agentId", "Derived reputation and its evidence"],
+  ["POST", "/api/v1/clearing", "Run a clearing cycle (nets; never settles)"],
+  ["POST", "/api/v1/credentials/verify", "Verify an agent credential (public)"],
+  ["POST", "/api/v1/webhooks", "Subscribe to job.funded / job.settled"],
+  ["POST", "/api/v1/api-keys", "Issue an API key (signed-in session only)"],
 ] as const;
 
 export default async function DevelopersPage(): Promise<React.JSX.Element> {
   const user = await currentUser();
-  const [adapters] = await Promise.all([probeAll()]);
+  const [adapters, keys] = await Promise.all([
+    probeAll(),
+    user && getDb() ? listApiKeys(user.organizationId) : Promise.resolve(null),
+  ]);
   const { capabilities, configurationErrors } = getSettlementPlane();
   const services = serviceStates();
 
@@ -64,7 +77,10 @@ export default async function DevelopersPage(): Promise<React.JSX.Element> {
         </Panel>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      {/* min-w-0 on every grid item: a grid item defaults to min-width:auto, so
+          the MCP <pre> example would otherwise widen the column past a phone's
+          viewport and its overflow-x-auto wrapper would never clip. */}
+      <div className="grid gap-4 lg:grid-cols-3 *:min-w-0">
         <Panel className="lg:col-span-2">
           <PanelHeader title="REST API" description="Versioned under /api/v1." />
           <ul className="divide-y divide-[var(--color-border)]">
@@ -80,14 +96,27 @@ export default async function DevelopersPage(): Promise<React.JSX.Element> {
 
         <Panel>
           <PanelHeader title="API keys" description="Shown once at creation, stored only as a hash." />
-          <EmptyState
-            title={user ? "NO KEYS ISSUED" : "NOT SIGNED IN"}
-            description={
-              user
-                ? "Issuing API keys requires a configured database. Keys are displayed once and stored only as a SHA-256 hash."
-                : "Sign in to manage API keys for your organization."
-            }
-          />
+          {keys ? (
+            <ApiKeysPanel
+              keys={keys.map((key) => ({
+                id: key.id,
+                name: key.name,
+                prefix: key.prefix,
+                createdAt: key.createdAt.toISOString(),
+                lastUsedAt: key.lastUsedAt?.toISOString() ?? null,
+                revokedAt: key.revokedAt?.toISOString() ?? null,
+              }))}
+            />
+          ) : (
+            <EmptyState
+              title={user ? "NOT CONNECTED" : "NOT SIGNED IN"}
+              description={
+                user
+                  ? "Issuing API keys requires a configured database. Keys are displayed once and stored only as a SHA-256 hash."
+                  : "Sign in to manage API keys for your organization."
+              }
+            />
+          )}
         </Panel>
 
         <Panel className="lg:col-span-3">
@@ -95,7 +124,7 @@ export default async function DevelopersPage(): Promise<React.JSX.Element> {
             title="Network capabilities"
             description="Live state of every network primitive. Nothing executes against a primitive that is not verified live — UNKNOWN is treated exactly like DISABLED."
           />
-          <div className="grid gap-px bg-[var(--color-border)] sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-px bg-[var(--color-border)] sm:grid-cols-2 lg:grid-cols-3 *:min-w-0">
             {capabilities.list().map((capability) => (
               <div
                 key={capability.id}

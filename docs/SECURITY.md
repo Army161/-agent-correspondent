@@ -102,7 +102,12 @@ These were verified against a live Postgres: every mutation above raises
 - All request bodies are Zod-validated before reaching any economic code.
 - Chat tool loops are bounded (`stopWhen: stepCountIs(6)`) — a runaway loop is a
   cost incident, not a feature.
-- API keys are stored only as SHA-256 hashes and shown once at creation.
+- API keys are stored only as SHA-256 hashes and shown once at creation. They
+  can only be issued from a fresh, signed-in session — never by another API
+  key, which would let one leaked key make itself permanent — and revocation
+  takes effect on the next request. Keys carry full access to their
+  organization: the `scopes` column exists but is not enforced, so none are
+  granted.
 - `webhook_deliveries` is uniquely indexed on `(source, external_id)` to make
   inbound webhook replay a no-op.
 - Adapters use fixed request timeouts; credentials stay server-side and never
