@@ -14,6 +14,7 @@ import "server-only";
 import { and, eq, getDb, webhookDeliveryAttempts, webhooks } from "@acor/db";
 import { newId } from "@acor/core";
 
+import { captureException } from "../observability/sentry";
 import { decryptSecret, encryptSecret, generateWebhookSecret, signPayload } from "./crypto";
 
 /** The event names a subscription may list. Every event this deployment fires. */
@@ -183,7 +184,7 @@ export async function dispatchWebhookEvent(
           error,
         });
       } catch (cause) {
-        console.error("[webhooks] could not record delivery attempt:", cause);
+        captureException(cause, { organizationId, operation: "webhooks.recordAttempt", event });
       }
     }),
   );

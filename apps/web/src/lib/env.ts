@@ -64,6 +64,12 @@ export function serviceStates(): readonly ServiceState[] {
       configured: has("XRPL_WS_URL"),
       requires: ["XRPL_WS_URL"],
     },
+    {
+      id: "errorReporting",
+      label: "Error reporting (Sentry)",
+      configured: has("SENTRY_DSN"),
+      requires: ["SENTRY_DSN"],
+    },
   ];
 }
 

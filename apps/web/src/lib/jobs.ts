@@ -52,6 +52,7 @@ import {
 } from "@acor/core";
 
 import { recordAudit } from "./platform";
+import { captureException } from "./observability/sentry";
 import { dispatchWebhookEvent } from "./webhooks";
 
 /** The μLedger accounting asset for a settlement-asset symbol. USD is the fallback. */
@@ -142,7 +143,7 @@ export async function createJob(input: CreateJobInput): Promise<JobResult> {
       detail: { action: "created" } as never,
     });
   } catch (cause) {
-    console.error("[jobs] could not create job:", cause);
+    captureException(cause, { organizationId: input.organizationId, operation: "jobs.create" });
     return { ok: false, error: "Could not create the job." };
   }
 
@@ -274,7 +275,12 @@ export async function transitionJob(input: TransitionInput): Promise<JobResult> 
     });
   } catch (cause) {
     if (sideEffectFailure) return sideEffectFailure;
-    console.error("[jobs] transition failed:", cause);
+    captureException(cause, {
+      organizationId: input.organizationId,
+      operation: "jobs.transition",
+      jobId: input.jobId,
+      transition: input.transition,
+    });
     return { ok: false, error: "Could not apply this transition." };
   }
 
